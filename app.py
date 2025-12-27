@@ -77,6 +77,12 @@ class MathWiz:
 
     @staticmethod
     def identify_strict_swings(df, neighbor_count=3):
+        """
+        Identifies peaks/valleys that are higher/lower than `neighbor_count` candles
+        to the left AND right.
+        Note: The last `neighbor_count` candles in the DF can never be confirmed swings
+        because we don't know the future yet.
+        """
         is_swing_high = pd.Series(True, index=df.index)
         is_swing_low = pd.Series(True, index=df.index)
         
@@ -90,9 +96,11 @@ class MathWiz:
 
     @staticmethod
     def find_fvg(df):
-        # Bullish: Low of current > High of 2 candles ago
+        # Bullish FVG: Current Low > High of 2 candles ago
+        # The 'True' marks the 3rd candle that confirms the gap.
         bull_fvg = (df['Low'] > df['High'].shift(2))
-        # Bearish: High of current < Low of 2 candles ago
+        
+        # Bearish FVG: Current High < Low of 2 candles ago
         bear_fvg = (df['High'] < df['Low'].shift(2))
         return bull_fvg, bear_fvg
 
@@ -124,7 +132,6 @@ class MathWiz:
 # ==========================================
 @st.cache_data
 def load_tickers(market_choice):
-    # Ensure correct file path loading in cloud environment
     filename = "ind_tickers.csv" if "India" in market_choice else "us_tickers.csv"
     if not os.path.exists(filename):
         st.error(f"❌ '{filename}' not found. Ensure CSV files are in the repository.")
@@ -138,7 +145,7 @@ def load_tickers(market_choice):
         return clean
     except: return []
 
-@st.cache_data(ttl=3600) # Cache for 1 hour
+@st.cache_data(ttl=3600)
 def fetch_bulk_data(tickers, interval="1d", period="2y"):
     if not tickers: return None
     data = yf.download(tickers, period=period, interval=interval, group_by='ticker', progress=True, threads=True)
@@ -228,34 +235,43 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
         
         curr = df.iloc[-1]
+        prev = df.iloc[-2]
         price = round(curr['Close'], 2)
 
         # -------------------------------------------------------------------
-        # [UPDATED] Bullish FVG Breakout (Confirmation on 3rd Candle)
+        # [UPDATED] Bullish FVG Sniper Entry
         # -------------------------------------------------------------------
-        # Logic: We strictly check if the CURRENT candle (the 3rd one forming the FVG)
-        # has closed ABOVE the most recent valid Swing High.
+        # Criteria: 
+        # 1. The LATEST candle (curr) must complete a Bullish FVG.
+        # 2. This SAME candle must close ABOVE the most recent confirmed Swing High.
+        # 3. The PREVIOUS candle must have closed BELOW (or equal to) that Swing High.
+        #    (Ensures this is the FRESH breakout moment).
         if curr['Bull_FVG']:
-            # Get valid past swing highs (swings must be confirmed by neighbors, so they are always in the past)
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
                 last_swing_high = past_swings['High'].iloc[-1]
-                if curr['Close'] > last_swing_high:
+                
+                # The Sniper Check: Fresh break on the FVG trigger candle
+                if curr['Close'] > last_swing_high and prev['Close'] <= last_swing_high:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf})
         
         # -------------------------------------------------------------------
-        # [UPDATED] Bearish FVG Breakdown (Confirmation on 3rd Candle)
+        # [UPDATED] Bearish FVG Sniper Entry
         # -------------------------------------------------------------------
-        # Logic: We strictly check if the CURRENT candle (the 3rd one forming the FVG)
-        # has closed BELOW the most recent valid Swing Low.
+        # Criteria:
+        # 1. The LATEST candle (curr) must complete a Bearish FVG.
+        # 2. This SAME candle must close BELOW the most recent confirmed Swing Low.
+        # 3. The PREVIOUS candle must have closed ABOVE (or equal to) that Swing Low.
         if curr['Bear_FVG']:
             past_swings = df[df['Is_Swing_Low']]
             if not past_swings.empty:
                 last_swing_low = past_swings['Low'].iloc[-1]
-                if curr['Close'] < last_swing_low:
+                
+                # The Sniper Check: Fresh break on the FVG trigger candle
+                if curr['Close'] < last_swing_low and prev['Close'] >= last_swing_low:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
 
-        # Order Blocks
+        # Order Blocks (Contextual, kept as is for support)
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
@@ -315,9 +331,8 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
 # 6. MAIN DASHBOARD UI
 # ==========================================
 def main():
-    # --- AUTHENTICATION GATE ---
     if not check_password():
-        st.stop()  # Stop execution if password is wrong
+        st.stop()
         
     st.title("Prath's Market Scanner")
 
@@ -409,7 +424,7 @@ def main():
             st.header("🐂 Bullish Scans")
             
             st.subheader("FVG Breakouts")
-            st.caption("Confirmed break of structure by the FVG formation candle.")
+            st.caption("Fresh break of structure on the FVG formation candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
@@ -430,7 +445,7 @@ def main():
             st.header("🐻 Bearish Scans")
             
             st.subheader("FVG Breakdowns")
-            st.caption("Confirmed break of structure by the FVG formation candle.")
+            st.caption("Fresh break of structure on the FVG formation candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
