@@ -77,6 +77,10 @@ class MathWiz:
 
     @staticmethod
     def identify_strict_swings(df, neighbor_count=3):
+        """
+        Identifies peaks/valleys that are higher/lower than `neighbor_count` candles
+        to the left AND right.
+        """
         is_swing_high = pd.Series(True, index=df.index)
         is_swing_low = pd.Series(True, index=df.index)
         
@@ -100,9 +104,7 @@ class MathWiz:
         Checks the specific 5-candle iFVG Reversal structure on the LATEST data.
         Returns: 'Bull', 'Bear', or None
         """
-        if len(df) < 5: return None
-        
-        # Take last 5 candles and drop NaNs to ensure data integrity
+        # Take last 5 candles and drop NaNs to ensure clean data
         subset = df.iloc[-5:].copy().dropna()
         if len(subset) < 5: return None
 
