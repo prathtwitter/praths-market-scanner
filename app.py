@@ -80,8 +80,6 @@ class MathWiz:
         """
         Identifies peaks/valleys that are higher/lower than `neighbor_count` candles
         to the left AND right.
-        Note: The last `neighbor_count` candles in the DF can never be confirmed swings
-        because we don't know the future yet.
         """
         is_swing_high = pd.Series(True, index=df.index)
         is_swing_low = pd.Series(True, index=df.index)
@@ -96,13 +94,44 @@ class MathWiz:
 
     @staticmethod
     def find_fvg(df):
-        # Bullish FVG: Current Low > High of 2 candles ago
-        # The 'True' marks the 3rd candle that confirms the gap.
         bull_fvg = (df['Low'] > df['High'].shift(2))
-        
-        # Bearish FVG: Current High < Low of 2 candles ago
         bear_fvg = (df['High'] < df['Low'].shift(2))
         return bull_fvg, bear_fvg
+    
+    @staticmethod
+    def check_ifvg_reversal(df):
+        """
+        Checks the specific 5-candle iFVG Reversal structure on the LATEST data.
+        Returns: 'Bull', 'Bear', or None
+        """
+        if len(df) < 5: return None
+        
+        # Extract latest 5 candles. 
+        # C1=iloc[-5], C3=iloc[-3], C5=iloc[-1]
+        subset = df.iloc[-5:]
+        c1 = subset.iloc[0]
+        c3 = subset.iloc[2]
+        c5 = subset.iloc[4] # Current candle
+        
+        # Bullish iFVG Scan:
+        # 1. Bearish FVG between C1 and C3 (Drop) -> C3 High < C1 Low
+        # 2. Bullish FVG between C3 and C5 (Pop)  -> C5 Low > C3 High
+        is_bear_fvg_first = c3['High'] < c1['Low']
+        is_bull_fvg_second = c5['Low'] > c3['High']
+        
+        if is_bear_fvg_first and is_bull_fvg_second:
+            return 'Bull'
+
+        # Bearish iFVG Scan:
+        # 1. Bullish FVG between C1 and C3 (Pop)  -> C3 Low > C1 High
+        # 2. Bearish FVG between C3 and C5 (Drop) -> C5 High < C3 Low
+        is_bull_fvg_first = c3['Low'] > c1['High']
+        is_bear_fvg_second = c5['High'] < c3['Low']
+        
+        if is_bull_fvg_first and is_bear_fvg_second:
+            return 'Bear'
+            
+        return None
 
     @staticmethod
     def find_unmitigated_fvg_zone(df, threshold_pct=0.05):
@@ -225,12 +254,13 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         
     except: return []
 
-    # 1. FVG & ORDER BLOCKS (Iterate Timeframes)
+    # 1. FVG & ORDER BLOCKS & iFVG (Iterate Timeframes)
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
-        df = data_map[tf].copy() # Critical Copy
+        df = data_map[tf].copy() 
         
+        # Run Standard FVG/Swing Logic
         df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
         df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
         
@@ -238,40 +268,22 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         prev = df.iloc[-2]
         price = round(curr['Close'], 2)
 
-        # -------------------------------------------------------------------
-        # [UPDATED] Bullish FVG Sniper Entry
-        # -------------------------------------------------------------------
-        # Criteria: 
-        # 1. The LATEST candle (curr) must complete a Bullish FVG.
-        # 2. This SAME candle must close ABOVE the most recent confirmed Swing High.
-        # 3. The PREVIOUS candle must have closed BELOW (or equal to) that Swing High.
-        #    (Ensures this is the FRESH breakout moment).
+        # --- A. SNIPER FVG ENTRIES ---
         if curr['Bull_FVG']:
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
                 last_swing_high = past_swings['High'].iloc[-1]
-                
-                # The Sniper Check: Fresh break on the FVG trigger candle
                 if curr['Close'] > last_swing_high and prev['Close'] <= last_swing_high:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf})
         
-        # -------------------------------------------------------------------
-        # [UPDATED] Bearish FVG Sniper Entry
-        # -------------------------------------------------------------------
-        # Criteria:
-        # 1. The LATEST candle (curr) must complete a Bearish FVG.
-        # 2. This SAME candle must close BELOW the most recent confirmed Swing Low.
-        # 3. The PREVIOUS candle must have closed ABOVE (or equal to) that Swing Low.
         if curr['Bear_FVG']:
             past_swings = df[df['Is_Swing_Low']]
             if not past_swings.empty:
                 last_swing_low = past_swings['Low'].iloc[-1]
-                
-                # The Sniper Check: Fresh break on the FVG trigger candle
                 if curr['Close'] < last_swing_low and prev['Close'] >= last_swing_low:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
 
-        # Order Blocks (Contextual, kept as is for support)
+        # --- B. ORDER BLOCKS ---
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
@@ -287,6 +299,14 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
                 c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
                 if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf})
+        
+        # --- C. iFVG REVERSALS (1D, 1W, 1M only) ---
+        if tf in ["1D", "1W", "1M"]:
+            ifvg_status = MathWiz.check_ifvg_reversal(df)
+            if ifvg_status == "Bull":
+                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_iFVG", "TF": tf})
+            elif ifvg_status == "Bear":
+                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_iFVG", "TF": tf})
 
     # 2. STRONG SUPPORT
     sup_tf = []
@@ -397,6 +417,15 @@ def main():
             brf_1w = get_res("Bear_FVG", "1W")
             brf_1m = get_res("Bear_FVG", "1M")
 
+            # iFVG (New)
+            bif_1d = get_res("Bull_iFVG", "1D")
+            bif_1w = get_res("Bull_iFVG", "1W")
+            bif_1m = get_res("Bull_iFVG", "1M")
+
+            brif_1d = get_res("Bear_iFVG", "1D")
+            brif_1w = get_res("Bear_iFVG", "1W")
+            brif_1m = get_res("Bear_iFVG", "1M")
+
             # OB
             bob_1d = get_res("Bull_OB", "1D")
             bob_1w = get_res("Bull_OB", "1W")
@@ -428,6 +457,12 @@ def main():
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+
+            st.subheader("🔄 iFVG Reversals")
+            st.caption("5-Candle V-Shape: Bear FVG (Drop) → Bull FVG (Pop)")
+            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
             st.divider()
             st.subheader("Order Block Breakouts")
@@ -450,6 +485,12 @@ def main():
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
+            st.subheader("🔄 iFVG Reversals")
+            st.caption("5-Candle Inverted V: Bull FVG (Pop) → Bear FVG (Drop)")
+            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+
             st.divider()
             st.subheader("Order Block Breakdowns")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brob_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
