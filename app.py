@@ -90,7 +90,9 @@ class MathWiz:
 
     @staticmethod
     def find_fvg(df):
+        # Bullish: Low of current > High of 2 candles ago
         bull_fvg = (df['Low'] > df['High'].shift(2))
+        # Bearish: High of current < Low of 2 candles ago
         bear_fvg = (df['High'] < df['Low'].shift(2))
         return bull_fvg, bear_fvg
 
@@ -120,6 +122,7 @@ class MathWiz:
 # ==========================================
 # 4. ROBUST DATA ENGINE
 # ==========================================
+@st.cache_data
 def load_tickers(market_choice):
     # Ensure correct file path loading in cloud environment
     filename = "ind_tickers.csv" if "India" in market_choice else "us_tickers.csv"
@@ -135,6 +138,7 @@ def load_tickers(market_choice):
         return clean
     except: return []
 
+@st.cache_data(ttl=3600) # Cache for 1 hour
 def fetch_bulk_data(tickers, interval="1d", period="2y"):
     if not tickers: return None
     data = yf.download(tickers, period=period, interval=interval, group_by='ticker', progress=True, threads=True)
@@ -167,7 +171,7 @@ def resample_custom(df, timeframe):
     try:
         if timeframe == "1D": return df.resample("1D").agg(agg_dict).dropna()
         if timeframe == "1W": return df.resample("W-FRI").agg(agg_dict).dropna()
-        if timeframe == "1M": return df.resample("1ME").agg(agg_dict).dropna()
+        if timeframe == "1M": return df.resample("ME").agg(agg_dict).dropna()
 
         # Long Term Strict
         df_monthly = df.resample('MS').agg(agg_dict).dropna()
@@ -224,36 +228,49 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
         
         curr = df.iloc[-1]
-        prev = df.iloc[-2]
         price = round(curr['Close'], 2)
 
-        # Bullish FVG
-        if (curr['Bull_FVG'] or prev['Bull_FVG']):
-            past_swings = df[df['Is_Swing_High']].iloc[:-1]
-            if not past_swings.empty and curr['Close'] > past_swings['High'].iloc[-1]:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf})
+        # -------------------------------------------------------------------
+        # [UPDATED] Bullish FVG Breakout (Confirmation on 3rd Candle)
+        # -------------------------------------------------------------------
+        # Logic: We strictly check if the CURRENT candle (the 3rd one forming the FVG)
+        # has closed ABOVE the most recent valid Swing High.
+        if curr['Bull_FVG']:
+            # Get valid past swing highs (swings must be confirmed by neighbors, so they are always in the past)
+            past_swings = df[df['Is_Swing_High']]
+            if not past_swings.empty:
+                last_swing_high = past_swings['High'].iloc[-1]
+                if curr['Close'] > last_swing_high:
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf})
         
-        # Bearish FVG
-        if (curr['Bear_FVG'] or prev['Bear_FVG']):
-            past_swings = df[df['Is_Swing_Low']].iloc[:-1]
-            if not past_swings.empty and curr['Close'] < past_swings['Low'].iloc[-1]:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
+        # -------------------------------------------------------------------
+        # [UPDATED] Bearish FVG Breakdown (Confirmation on 3rd Candle)
+        # -------------------------------------------------------------------
+        # Logic: We strictly check if the CURRENT candle (the 3rd one forming the FVG)
+        # has closed BELOW the most recent valid Swing Low.
+        if curr['Bear_FVG']:
+            past_swings = df[df['Is_Swing_Low']]
+            if not past_swings.empty:
+                last_swing_low = past_swings['Low'].iloc[-1]
+                if curr['Close'] < last_swing_low:
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
 
         # Order Blocks
         subset = df.iloc[-4:].copy()
-        c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
-        
-        # Bullish OB
-        if (c_anc['Close'] < c_anc['Open'] and 
-            c1['Close'] > c1['Open'] and c2['Close'] > c2['Open'] and c3['Close'] > c3['Open']):
-            if c3['Low'] > c1['High'] and c3['Close'] > c_anc['High']:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf})
+        if len(subset) == 4:
+            c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
+            
+            # Bullish OB
+            if (c_anc['Close'] < c_anc['Open'] and 
+                c1['Close'] > c1['Open'] and c2['Close'] > c2['Open'] and c3['Close'] > c3['Open']):
+                if c3['Low'] > c1['High'] and c3['Close'] > c_anc['High']:
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf})
 
-        # Bearish OB
-        if (c_anc['Close'] > c_anc['Open'] and 
-            c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
-            if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf})
+            # Bearish OB
+            if (c_anc['Close'] > c_anc['Open'] and 
+                c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
+                if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf})
 
     # 2. STRONG SUPPORT
     sup_tf = []
@@ -392,7 +409,7 @@ def main():
             st.header("🐂 Bullish Scans")
             
             st.subheader("FVG Breakouts")
-            st.caption("Top 5 by Market Cap")
+            st.caption("Confirmed break of structure by the FVG formation candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
@@ -413,7 +430,7 @@ def main():
             st.header("🐻 Bearish Scans")
             
             st.subheader("FVG Breakdowns")
-            st.caption("Top 5 by Market Cap")
+            st.caption("Confirmed break of structure by the FVG formation candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
