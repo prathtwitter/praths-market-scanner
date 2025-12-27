@@ -77,10 +77,6 @@ class MathWiz:
 
     @staticmethod
     def identify_strict_swings(df, neighbor_count=3):
-        """
-        Identifies peaks/valleys that are higher/lower than `neighbor_count` candles
-        to the left AND right.
-        """
         is_swing_high = pd.Series(True, index=df.index)
         is_swing_low = pd.Series(True, index=df.index)
         
@@ -106,9 +102,10 @@ class MathWiz:
         """
         if len(df) < 5: return None
         
-        # Extract latest 5 candles. 
-        # C1=iloc[-5], C3=iloc[-3], C5=iloc[-1]
-        subset = df.iloc[-5:]
+        # Take last 5 candles and drop NaNs to ensure data integrity
+        subset = df.iloc[-5:].copy().dropna()
+        if len(subset) < 5: return None
+
         c1 = subset.iloc[0]
         c3 = subset.iloc[2]
         c5 = subset.iloc[4] # Current candle
@@ -460,9 +457,13 @@ def main():
 
             st.subheader("🔄 iFVG Reversals")
             st.caption("5-Candle V-Shape: Bear FVG (Drop) → Bull FVG (Pop)")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            
+            if bif_1d.empty and bif_1w.empty and bif_1m.empty:
+                 st.info("No iFVG setups found.")
+            else:
+                 st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
             st.divider()
             st.subheader("Order Block Breakouts")
@@ -487,9 +488,13 @@ def main():
             
             st.subheader("🔄 iFVG Reversals")
             st.caption("5-Candle Inverted V: Bull FVG (Pop) → Bear FVG (Drop)")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            
+            if brif_1d.empty and brif_1w.empty and brif_1m.empty:
+                 st.info("No iFVG setups found.")
+            else:
+                 st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
 
             st.divider()
             st.subheader("Order Block Breakdowns")
