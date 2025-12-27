@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Market Scanner", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v2.0", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -523,3 +523,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
