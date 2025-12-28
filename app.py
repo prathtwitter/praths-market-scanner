@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v5.2", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v5.3", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -26,10 +26,11 @@ st.markdown("""
         width: 100%; 
         border-radius: 8px; 
         font-weight: bold;
-        height: 60px;
+        height: 50px;
         background-color: #1f2937;
         color: white;
         border: 1px solid #374151;
+        margin-bottom: 10px;
     }
     .stButton>button:hover {
         border-color: #00CC96;
@@ -42,6 +43,8 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
+    /* Image caption style */
+    .stImage { margin-bottom: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -129,7 +132,7 @@ class AI_Analyst:
         """
         
         try:
-            # FIXED: Using 1.5-flash for maximum stability/quota
+            # Using 1.5-flash for maximum stability/quota
             model = genai.GenerativeModel('gemini-1.5-flash')
             res = model.generate_content(prompt)
             return res.text
@@ -282,11 +285,10 @@ def scan_logic(ticker, df_d, df_m, scan_type):
             df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
             
             if "Bullish" in scan_type and curr['Bull']:
-                # Look for ANY recent swing high break in the last 3 candles to be more forgiving
+                # Look for ANY recent swing high break in the last 3 candles
                 past_swings = df[df['Is_H']]
                 if not past_swings.empty:
                     last_swing = past_swings['High'].iloc[-1]
-                    # Check if price closed above last swing recently
                     recent_highs = df['Close'].iloc[-3:] 
                     if (recent_highs > last_swing).any():
                         results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
@@ -368,7 +370,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v5.2")
+    st.title("Prath's Sniper v5.3")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -384,22 +386,39 @@ def main():
     c1, c2, c3 = st.columns(3)
     scan_request = None
     
+    # --- UI WITH DIAGRAMS ---
     with c1:
         st.header("🐂 Bullish")
+        
         if st.button("Bullish FVG Breakouts"): scan_request = "Bullish FVG"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bullish+FVG%0A(Gap+%2B+Aggressive+Break+Up)", use_container_width=True)
+        
         if st.button("Bullish Order Blocks"): scan_request = "Bullish Order Block"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bullish+Order+Block%0A(Down+Candle+Before+Rally)", use_container_width=True)
+        
         if st.button("Bullish iFVG Reversal"): scan_request = "Bullish iFVG"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bullish+iFVG%0A(Bearish+Gap+Failure+->+Support)", use_container_width=True)
 
     with c2:
         st.header("🐻 Bearish")
+        
         if st.button("Bearish FVG Breakdowns"): scan_request = "Bearish FVG"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bearish+FVG%0A(Gap+%2B+Aggressive+Break+Down)", use_container_width=True)
+        
         if st.button("Bearish Order Blocks"): scan_request = "Bearish Order Block"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bearish+Order+Block%0A(Up+Candle+Before+Drop)", use_container_width=True)
+        
         if st.button("Bearish iFVG Reversal"): scan_request = "Bearish iFVG"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Bearish+iFVG%0A(Bullish+Gap+Failure+->+Resistance)", use_container_width=True)
 
     with c3:
         st.header("⚡ Volatility")
+        
         if st.button("Strong Support Zones"): scan_request = "Strong Support"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Strong+Support%0A(3M%2F6M+Unmitigated+Gap+Bounce)", use_container_width=True)
+        
         if st.button("Volatility Squeezes"): scan_request = "Squeeze"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=Ideal+Setup%3A+Squeeze%0A(Chop+Index+>+60%2C+Coiling)", use_container_width=True)
 
     if scan_request:
         st.divider()
