@@ -17,48 +17,49 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v6.1", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v6.2", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
-    /* Professional Dark Theme Tweaks */
     .stApp { background-color: #0e1117; color: #FAFAFA; }
-    
-    /* Metrics */
     div[data-testid="stMetricValue"] { font-size: 18px; color: #00CC96; }
     
-    /* Professional Button Styling */
+    /* Button Styling */
     .stButton>button { 
         width: 100%; 
-        border-radius: 6px; 
-        font-weight: 600;
-        height: 48px;
+        border-radius: 8px; 
+        font-weight: bold;
+        height: 45px;
         background-color: #1f2937;
-        color: #e5e7eb;
+        color: white;
         border: 1px solid #374151;
-        transition: all 0.2s ease;
+        margin-top: 5px;
+        margin-bottom: 15px;
     }
     .stButton>button:hover {
         border-color: #00CC96;
         color: #00CC96;
-        background-color: #2d3748;
     }
     
-    /* AI Verdict Box */
+    /* AI Box Styling */
     .ai-box {
-        border-left: 4px solid #00CC96;
-        background-color: #161b22;
-        padding: 15px 20px;
-        border-radius: 4px;
-        margin-bottom: 25px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+        border: 2px solid #00CC96;
+        background-color: #162b26;
+        padding: 20px;
+        border-radius: 10px;
+        margin-bottom: 20px;
     }
     
-    /* Headers */
-    h3 { font-weight: 700; letter-spacing: -0.5px; }
-    h4 { color: #9ca3af; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; margin-top: 20px; }
+    /* Headers & Text */
+    h4 { padding-top: 10px; margin-bottom: 0px; color: #e5e7eb; }
+    div[data-testid="stCaptionContainer"] {
+        color: #9ca3af;
+        font-size: 13px;
+        margin-bottom: 10px;
+        line-height: 1.4;
+    }
     
-    /* Tables */
-    .stDataFrame { border: 1px solid #333; border-radius: 4px; }
+    /* Image Container */
+    .stImage img { border-radius: 5px; border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,7 +79,7 @@ def check_password():
         else:
             st.session_state.password_correct = False
     st.text_input("Enter Access Key", type="password", on_change=password_entered, key="password")
-    if "password_correct" in st.session_state and not st.session_state.password_correct:
+    if not st.session_state.password_correct:
         st.error("⛔ Access Denied")
         return False
     return True
@@ -120,7 +121,7 @@ class AI_Analyst:
     @staticmethod
     def generate_top_pick(df, scan_name):
         if not AI_AVAILABLE: return "⚠️ AI Library Missing"
-        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key Missing in Secrets"
+        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key Missing"
         
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
@@ -136,7 +137,7 @@ class AI_Analyst:
         **Your Mission:**
         1.  Analyze setups based on Price, Chop (Choppiness Index), and Timeframe.
         2.  **Filter:** Reject stocks with earnings in < 3 days.
-        3.  **Logic:** - Breakouts (FVG/OB): Prefer Chop < 40.
+        3.  **Logic:** - FVG Breakouts: Look for strong displacement relative to the opposing gap.
             - Reversals/Squeezes: Prefer Chop > 60.
         4.  **Select ONE Top Pick.**
         
@@ -176,19 +177,10 @@ class MathWiz:
             return pd.Series(dtype='float64')
 
     @staticmethod
-    def identify_strict_swings(df, neighbor_count=3):
-        is_swing_high = pd.Series(True, index=df.index)
-        is_swing_low = pd.Series(True, index=df.index)
-        for i in range(1, neighbor_count + 1):
-            is_swing_high &= (df['High'] > df['High'].shift(i))
-            is_swing_low &= (df['Low'] < df['Low'].shift(i))
-            is_swing_high &= (df['High'] > df['High'].shift(-i))
-            is_swing_low &= (df['Low'] < df['Low'].shift(-i))
-        return is_swing_high, is_swing_low
-
-    @staticmethod
     def find_fvg(df):
+        # Bullish: Low[i] > High[i-2]
         bull_fvg = (df['Low'] > df['High'].shift(2))
+        # Bearish: High[i] < Low[i-2]
         bear_fvg = (df['High'] < df['Low'].shift(2))
         return bull_fvg, bear_fvg
     
@@ -238,6 +230,7 @@ def load_tickers(market_choice):
 @st.cache_data(ttl=3600)
 def fetch_bulk_data(tickers):
     if not tickers: return None
+    # Auto adjust ensures we get proper prices
     return yf.download(tickers, period="2y", interval="1d", group_by='ticker', progress=False, threads=True, auto_adjust=True)
 
 @st.cache_data(ttl=3600)
@@ -282,26 +275,66 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         df = data_map[tf].copy()
+        
+        # Calculate Indicators
         chop = 0
         if "Chop" not in df.columns:
             chop_s = MathWiz.calculate_choppiness(df['High'], df['Low'], df['Close'])
             chop = round(chop_s.iloc[-1], 2) if not chop_s.empty else 0
-        curr = df.iloc[-1]; price = round(curr['Close'], 2)
+        
+        curr = df.iloc[-1]
+        price = round(curr['Close'], 2)
 
+        # ----------------------------------------
+        # FVG SCAN (NEW OPPOSING LOGIC)
+        # ----------------------------------------
         if "FVG" in scan_type:
-            df['Bull'], df['Bear'] = MathWiz.find_fvg(df)
-            df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
-            if "Bullish" in scan_type and curr['Bull']:
-                past_swings = df[df['Is_H']]
-                if not past_swings.empty:
-                    if (df['Close'].iloc[-3:] > past_swings['High'].iloc[-1]).any():
-                        results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
-            if "Bearish" in scan_type and curr['Bear']:
-                past_swings = df[df['Is_L']]
-                if not past_swings.empty:
-                    if (df['Close'].iloc[-3:] < past_swings['Low'].iloc[-1]).any():
-                        results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
+            # Pre-calculate FVGs for history
+            df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
+            
+            # --- BULLISH FVG BREAKOUT ---
+            if "Bullish" in scan_type and df['Bull_FVG'].iloc[-1]:
+                # 1. Look for most recent Bearish FVG in history (ignoring current if weirdly overlapped)
+                bear_fvg_indices = np.where(df['Bear_FVG'])[0]
+                # Exclude current candle index (len-1)
+                bear_fvg_indices = bear_fvg_indices[bear_fvg_indices < len(df) - 1]
+                
+                if len(bear_fvg_indices) > 0:
+                    last_bear_idx = bear_fvg_indices[-1] # Index of candle 3 of the bearish pattern
+                    # Candle 1 of the pattern is index - 2
+                    ref_candle_idx = last_bear_idx - 2
+                    
+                    if ref_candle_idx >= 0:
+                        # Swing High = High of Candle 1 of the Bearish FVG
+                        swing_high = df['High'].iloc[ref_candle_idx]
+                        
+                        # Trigger: Current Close > Swing High
+                        if curr['Close'] > swing_high:
+                            info_txt = f"Broke Bear FVG High ({round(swing_high, 2)})"
+                            results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
+            # --- BEARISH FVG BREAKDOWN ---
+            if "Bearish" in scan_type and df['Bear_FVG'].iloc[-1]:
+                # 1. Look for most recent Bullish FVG
+                bull_fvg_indices = np.where(df['Bull_FVG'])[0]
+                bull_fvg_indices = bull_fvg_indices[bull_fvg_indices < len(df) - 1]
+                
+                if len(bull_fvg_indices) > 0:
+                    last_bull_idx = bull_fvg_indices[-1]
+                    ref_candle_idx = last_bull_idx - 2
+                    
+                    if ref_candle_idx >= 0:
+                        # Swing Low = Low of Candle 1 of the Bullish FVG
+                        swing_low = df['Low'].iloc[ref_candle_idx]
+                        
+                        # Trigger: Current Close < Swing Low
+                        if curr['Close'] < swing_low:
+                            info_txt = f"Broke Bull FVG Low ({round(swing_low, 2)})"
+                            results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
+
+        # ----------------------------------------
+        # ORDER BLOCKS
+        # ----------------------------------------
         if "Order Block" in scan_type:
             sub = df.iloc[-4:].copy()
             if len(sub) == 4:
@@ -315,6 +348,9 @@ def scan_logic(ticker, df_d, df_m, scan_type):
                         if c3['High']<c1['Low'] and c3['Close']<c0['Low']:
                              results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
 
+        # ----------------------------------------
+        # iFVG REVERSAL
+        # ----------------------------------------
         if "iFVG" in scan_type and tf in ["1D", "1W", "1M"]:
             res = MathWiz.check_ifvg_reversal(df)
             if "Bullish" in scan_type and res == "Bull":
@@ -365,7 +401,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v6.1")
+    st.title("Prath's Sniper v6.2")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -387,7 +423,7 @@ def main():
     with c1:
         st.write("#### 🐂 Bullish")
         
-        if st.button("Bullish FVG", help="Strong bullish candle creating a Gap while breaking a recent swing high."): scan_request = "Bullish FVG"
+        if st.button("Bullish FVG", help="Latest candle created a Bullish FVG AND broke the High of the most recent Bearish FVG."): scan_request = "Bullish FVG"
         if st.button("Bullish OB", help="Last down-candle before an impulsive upward move that broke structure."): scan_request = "Bullish Order Block"
         if st.button("Bullish iFVG", help="A failed Bearish Gap that price has reclaimed and flipped into support."): scan_request = "Bullish iFVG"
 
@@ -395,7 +431,7 @@ def main():
     with c2:
         st.write("#### 🐻 Bearish")
         
-        if st.button("Bearish FVG", help="Strong bearish candle creating a Gap while breaking a recent swing low."): scan_request = "Bearish FVG"
+        if st.button("Bearish FVG", help="Latest candle created a Bearish FVG AND broke the Low of the most recent Bullish FVG."): scan_request = "Bearish FVG"
         if st.button("Bearish OB", help="Last up-candle before an impulsive downward move that broke structure."): scan_request = "Bearish Order Block"
         if st.button("Bearish iFVG", help="A failed Bullish Gap that price has broken below and flipped into resistance."): scan_request = "Bearish iFVG"
 
