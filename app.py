@@ -18,7 +18,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Market Scanner v4.0 (AI Picks)", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v4.1 (Stable)", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -27,14 +27,6 @@ st.markdown("""
     .stDataFrame { border: 1px solid #333; }
     h3 { border-bottom: 2px solid #333; padding-bottom: 10px; }
     .stButton>button { width: 100%; border-radius: 5px; }
-    /* AI Pick Box Styling */
-    .ai-pick-box {
-        border: 1px solid #00CC96;
-        border-radius: 5px;
-        padding: 15px;
-        background-color: #11221c;
-        margin-bottom: 10px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,87 +59,87 @@ def check_password():
 class AI_Analyst:
     @staticmethod
     def get_earnings_date_bulk(tickers):
-        """Fetches earnings dates for a list of tickers in parallel."""
+        """Fetches earnings dates robustly."""
         results = {}
         
         def fetch_single(ticker):
             try:
-                # Optimized fetch using fast_info or calendar
                 stock = yf.Ticker(ticker)
-                # Method 1: Calendar (most accurate for upcoming)
-                cal = stock.calendar
-                date_val = None
+                # Method 1: get_earnings_dates (DataFrame index contains dates)
+                dates_df = stock.get_earnings_dates(limit=8)
                 
-                if cal is not None and not cal.empty:
-                    if isinstance(cal, pd.DataFrame):
-                        # yfinance structure varies; usually row 0 is next earnings
-                        date_val = cal.iloc[0, 0]
-                    elif isinstance(cal, dict):
-                         date_val = cal.get('Earnings Date', [None])[0]
-                
-                if date_val:
-                    if isinstance(date_val, (datetime.datetime, pd.Timestamp)):
-                        date_val = date_val.date()
+                if dates_df is not None and not dates_df.empty:
+                    # Filter for future dates
+                    now = pd.Timestamp.now().tz_localize(dates_df.index.dtype.tz) if dates_df.index.tz else pd.Timestamp.now()
+                    future_dates = dates_df[dates_df.index > now].sort_index()
                     
-                    days = (date_val - datetime.date.today()).days
-                    if days >= 0:
-                        return ticker, f"{date_val.strftime('%b %d')} ({days}d left)"
-                    else:
-                        return ticker, "Earnings Passed"
-                return ticker, "No Date"
-            except:
-                return ticker, "N/A"
+                    if not future_dates.empty:
+                        next_date = future_dates.index[0]
+                        # Calculate days left
+                        delta = (next_date - now).days
+                        date_str = next_date.strftime('%b %d')
+                        return ticker, f"{date_str} ({delta}d)"
+                
+                # Method 2: Calendar fallback
+                cal = stock.calendar
+                if cal is not None and not cal.empty:
+                    # Handle varying formats (dict vs df)
+                    val = cal.iloc[0, 0] if isinstance(cal, pd.DataFrame) else cal.get('Earnings Date', [None])[0]
+                    if val:
+                        # Ensure comparison works
+                        if isinstance(val, (datetime.date, datetime.datetime)):
+                            delta = (val - datetime.date.today()).days
+                            return ticker, f"{val.strftime('%b %d')} ({delta}d)"
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
+                return ticker, "No Data"
+            except Exception:
+                return ticker, "-"
+
+        # Limit threads to prevent rate limiting
+        with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_ticker = {executor.submit(fetch_single, t): t for t in tickers}
             for future in future_to_ticker:
                 try:
                     t, res = future.result()
                     results[t] = res
                 except:
-                    results[future_to_ticker[future]] = "N/A"
+                    results[future_to_ticker[future]] = "-"
         return results
 
     @staticmethod
     def select_top_pick(df_bucket, scan_type):
-        """
-        Analyzes the filtered list and selects the best setup.
-        """
+        """Analyzes list and selects best setup."""
         if not AI_AVAILABLE: return "⚠️ AI not available."
         if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key missing."
         if df_bucket.empty: return "No stocks to analyze."
 
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
-        # Prepare data summary for the LLM
-        # Limit to top 15 to avoid token limits if list is huge
-        summary_csv = df_bucket[['Ticker', 'Price', 'Chop', 'TF', 'Info']].head(15).to_csv(index=False)
+        # Data Summary for LLM
+        summary = df_bucket[['Ticker', 'Price', 'Chop', 'TF', 'Info']].head(10).to_string(index=False)
         
         prompt = f"""
-        You are a Sniper Trader using Smart Money Concepts (SMC).
-        I have run a scanner for **{scan_type}**.
-        Here is the list of stocks that matched the criteria:
+        You are a Sniper Trader. Analyze this list of stocks from a **{scan_type}** scan.
         
-        {summary_csv}
+        DATA:
+        {summary}
         
-        **Your Task:**
-        1. Analyze the 'Choppiness Index' (Chop) and 'Timeframe' (TF).
-           - For Breakouts (FVG/OB): Prefer LOWER Chop (Trending < 38) or moderate Chop. Avoid >60 (Squeeze) unless it's a squeeze play.
-           - For Reversals: Prefer Extreme Chop (>60 or <20 depending on logic).
-           - For Support: Look for confluence.
-        2. Consider the 'Info' column (Earnings Date). Avoid stocks with earnings in < 3 days (too risky).
+        CRITERIA:
+        1. Ignore stocks with earnings in < 3 days.
+        2. Breakouts (FVG/OB): Prefer Chop < 45 (Trending).
+        3. Squeezes: Prefer Chop > 60.
         
-        **Output:**
-        Select the ONE single best chart setup from this list.
+        TASK:
+        Select the single best chart setup.
         
-        Format your response exactly like this:
+        OUTPUT FORMAT:
         **🏆 Top Pick: [TICKER]**
-        **Reasoning:** [2 sentences explaining why this specific technical setup is the best among the group, referencing its Chop/Price/Earnings context.]
+        **Reasoning:** [Why this specific setup is the strongest based on Price, Chop, and Timeframe.]
         """
         
         try:
-            # Using Gemini 2.0 Flash Exp (The latest preview model available via API)
-            model = genai.GenerativeModel('gemini-2.0-flash-exp') 
+            # Reverted to 1.5 Flash for stability and rate limits
+            model = genai.GenerativeModel('gemini-1.5-flash') 
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
@@ -311,7 +303,6 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
             ifvg = MathWiz.check_ifvg_reversal(df)
             if ifvg: results.append({"Ticker": ticker, "Price": price, "Type": f"{ifvg}_iFVG", "TF": tf, "Chop": current_chop, "Info": ""})
 
-    # SUPPORT
     sup_tf = []
     for t in ["3M", "6M", "12M"]:
         if MathWiz.find_unmitigated_fvg_zone(data_map[t]): sup_tf.append(t)
@@ -320,7 +311,6 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
         c_val = round(c3m.iloc[-1], 2) if not c3m.empty else 0
         results.append({"Ticker": ticker, "Price": round(data_map["3M"]['Close'].iloc[-1], 2), "Type": "Strong_Support", "TF": "Multiple", "Chop": c_val, "Info": ",".join(sup_tf)})
 
-    # SQUEEZE/REVERSAL
     if not data_map["1W"].empty:
         c_w = MathWiz.calculate_choppiness(data_map["1W"]['High'], data_map["1W"]['Low'], data_map["1W"]['Close']).iloc[-1]
         if c_w < 25: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Type": "Reversal", "TF": "1W", "Chop": round(c_w, 2), "Info": ""})
@@ -334,19 +324,20 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
 # ==========================================
 # 7. MAIN UI
 # ==========================================
-def display_ai_section(df, scan_type):
-    """Displays AI Top Pick for a given dataframe bucket."""
+def display_section_with_ai(df, scan_type, key_suffix):
+    """
+    Displays the table with an ON-DEMAND AI button to prevent 429 errors.
+    """
     if df.empty:
         st.caption("No setups found.")
         return
 
-    # Create an expander for the AI Analysis to save space
-    with st.expander(f"🧠 AI Top Pick: {scan_type}", expanded=False):
-        with st.spinner(f"Analyzing {len(df)} candidates..."):
+    # Unique key for the button is crucial
+    if st.button(f"✨ Analyze Top Pick ({scan_type})", key=f"btn_{key_suffix}"):
+        with st.spinner("AI Analyst is thinking..."):
             ai_verdict = AI_Analyst.select_top_pick(df, scan_type)
-            st.markdown(ai_verdict)
+            st.info(ai_verdict)
     
-    # Display the table normally
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 def main():
@@ -376,7 +367,7 @@ def main():
             st.sidebar.metric(name, "Err", "0.00")
 
     st.sidebar.divider()
-    st.title("Prath's Market Scanner v4.0")
+    st.title("Prath's Market Scanner v4.1")
     
     market = st.sidebar.selectbox("Select Market", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
     tickers = load_tickers(market)
@@ -408,28 +399,27 @@ def main():
         
         df_all = pd.DataFrame(all_res)
         
-        # --- NEW: BATCH EARNINGS FETCH ---
+        # --- ROBUST EARNINGS FETCH ---
         if not df_all.empty:
             unique_tickers = df_all['Ticker'].unique().tolist()
             with st.spinner("Fetching Earnings Dates..."):
                 earnings_map = AI_Analyst.get_earnings_date_bulk(unique_tickers)
             
-            # Apply to 'Info' column
             def update_info(row):
                 ticker = row['Ticker']
-                earn_str = earnings_map.get(ticker, "")
+                earn_str = earnings_map.get(ticker, "-")
                 current_info = row.get('Info', "")
                 
-                # If "Info" already has data (like Support timeframes), append. Else, just set.
+                if "Earnings Passed" in earn_str or earn_str == "-":
+                    # Keep existing info if earnings isn't relevant/found
+                    return current_info if current_info else "-"
+                
                 if current_info and earn_str:
                     return f"{current_info} | Earn: {earn_str}"
-                elif earn_str:
-                    return f"Earn: {earn_str}"
-                return current_info
+                return f"Earn: {earn_str}"
 
             df_all['Info'] = df_all.apply(update_info, axis=1)
 
-        # Helper to get specific bucket
         def get_df(type_n, tf=None):
             if df_all.empty: return pd.DataFrame()
             mask = (df_all['Type'] == type_n)
@@ -441,43 +431,41 @@ def main():
         
         with c1:
             st.header("🐂 Bullish Scans")
-            
             st.subheader("FVG Breakouts")
-            display_ai_section(get_df("Bull_FVG"), "Bullish FVG Breakouts")
+            display_section_with_ai(get_df("Bull_FVG"), "Bullish FVG", "bfvg")
 
             st.subheader("Order Blocks")
-            display_ai_section(get_df("Bull_OB"), "Bullish Order Blocks")
+            display_section_with_ai(get_df("Bull_OB"), "Bullish OB", "bob")
             
             st.subheader("iFVG Reversals")
-            display_ai_section(get_df("Bull_iFVG_iFVG"), "Bullish iFVG")
+            display_section_with_ai(get_df("Bull_iFVG_iFVG"), "Bullish iFVG", "bifvg")
 
         with c2:
             st.header("🐻 Bearish Scans")
-            
             st.subheader("FVG Breakdowns")
-            display_ai_section(get_df("Bear_FVG"), "Bearish FVG Breakdowns")
+            display_section_with_ai(get_df("Bear_FVG"), "Bearish FVG", "brfvg")
 
             st.subheader("Order Blocks")
-            display_ai_section(get_df("Bear_OB"), "Bearish Order Blocks")
+            display_section_with_ai(get_df("Bear_OB"), "Bearish OB", "brob")
 
             st.subheader("iFVG Reversals")
-            display_ai_section(get_df("Bear_iFVG_iFVG"), "Bearish iFVG")
+            display_section_with_ai(get_df("Bear_iFVG_iFVG"), "Bearish iFVG", "brifvg")
 
         st.divider()
         st.subheader("Strong Support (3M/6M/12M)")
         if not df_all.empty:
             sup_df = df_all[df_all['Type'] == "Strong_Support"]
-            display_ai_section(sup_df, "Strong Support Zones")
+            display_section_with_ai(sup_df, "Strong Support", "sup")
         
         st.divider()
         st.header("⚡ Volatility Squeeze Watchlist")
         c3, c4 = st.columns(2)
         with c3:
             st.write("**Daily Squeeze**")
-            display_ai_section(get_df("Squeeze", "1D"), "Daily Squeeze")
+            display_section_with_ai(get_df("Squeeze", "1D"), "Daily Squeeze", "sq1d")
         with c4:
             st.write("**Weekly Squeeze**")
-            display_ai_section(get_df("Squeeze", "1W"), "Weekly Squeeze")
+            display_section_with_ai(get_df("Squeeze", "1W"), "Weekly Squeeze", "sq1w")
 
 if __name__ == "__main__":
     main()
