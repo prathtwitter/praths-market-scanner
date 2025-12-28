@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v6.3", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v6.2", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -175,98 +175,34 @@ class MathWiz:
             return 100 * (numerator / denominator)
         except:
             return pd.Series(dtype='float64')
+    
+    @staticmethod
+    def identify_significant_swings(df):
+        """
+        Identifies Significant Swing Highs/Lows based on 7-candle pattern.
+        Swing High: High is not exceeded by preceding 3 or following 3 candles.
+        Swing Low: Low is not exceeded by preceding 3 or following 3 candles.
+        """
+        if len(df) < 7:
+            df['Is_Swing_High'] = False
+            df['Is_Swing_Low'] = False
+            return df
+            
+        # We use a rolling window of 7 with center=True.
+        # This looks at [i-3, i-2, i-1, i, i+1, i+2, i+3]
+        
+        # Max/Min over the 7 candle window
+        roll_max = df['High'].rolling(window=7, center=True).max()
+        roll_min = df['Low'].rolling(window=7, center=True).min()
+        
+        # A candle is a swing high if its High is the Max of that window
+        df['Is_Swing_High'] = (df['High'] == roll_max)
+        
+        # A candle is a swing low if its Low is the Min of that window
+        df['Is_Swing_Low'] = (df['Low'] == roll_min)
+        
+        return df
 
-    @staticmethod
-    def find_fvg(df):
-        """
-        Fair Value Gap Detection:
-        - Bullish FVG: Low of candle 3 > High of candle 1 (gap up, imbalance)
-        - Bearish FVG: High of candle 3 < Low of candle 1 (gap down, imbalance)
-        
-        Returns boolean series where True at index i means candle i is the 3rd candle of an FVG pattern
-        """
-        # Bullish: Low[i] > High[i-2] (current candle's low is above candle 1's high)
-        bull_fvg = (df['Low'] > df['High'].shift(2))
-        # Bearish: High[i] < Low[i-2] (current candle's high is below candle 1's low)
-        bear_fvg = (df['High'] < df['Low'].shift(2))
-        return bull_fvg, bear_fvg
-    
-    @staticmethod
-    def find_significant_swing_highs(df, left_bars=3, right_bars=3):
-        """
-        Find significant swing highs.
-        
-        A significant swing high is defined as a high formed by a candlestick whose high 
-        was NOT taken out (exceeded) by its preceding 3 candles AND its following 3 candles.
-        
-        Args:
-            df: DataFrame with OHLC data
-            left_bars: Number of candles to check before (default 3)
-            right_bars: Number of candles to check after (default 3)
-        
-        Returns:
-            List of tuples: [(index, high_value), ...] for all valid swing highs
-        """
-        swing_highs = []
-        highs = df['High'].values
-        
-        # We need at least left_bars + 1 + right_bars candles
-        if len(df) < left_bars + 1 + right_bars:
-            return swing_highs
-        
-        # Check each potential swing high (excluding edges where we can't look both directions)
-        for i in range(left_bars, len(df) - right_bars):
-            current_high = highs[i]
-            
-            # Check that the current high is higher than all left_bars preceding candles
-            left_valid = all(current_high > highs[i - j] for j in range(1, left_bars + 1))
-            
-            # Check that the current high is higher than all right_bars following candles
-            right_valid = all(current_high > highs[i + j] for j in range(1, right_bars + 1))
-            
-            if left_valid and right_valid:
-                swing_highs.append((i, current_high))
-        
-        return swing_highs
-    
-    @staticmethod
-    def find_significant_swing_lows(df, left_bars=3, right_bars=3):
-        """
-        Find significant swing lows.
-        
-        A significant swing low is defined as a low formed by a candlestick whose low 
-        was NOT taken out (undercut) by its preceding 3 candles AND its following 3 candles.
-        
-        Args:
-            df: DataFrame with OHLC data
-            left_bars: Number of candles to check before (default 3)
-            right_bars: Number of candles to check after (default 3)
-        
-        Returns:
-            List of tuples: [(index, low_value), ...] for all valid swing lows
-        """
-        swing_lows = []
-        lows = df['Low'].values
-        
-        # We need at least left_bars + 1 + right_bars candles
-        if len(df) < left_bars + 1 + right_bars:
-            return swing_lows
-        
-        # Check each potential swing low (excluding edges where we can't look both directions)
-        for i in range(left_bars, len(df) - right_bars):
-            current_low = lows[i]
-            
-            # Check that the current low is lower than all left_bars preceding candles
-            left_valid = all(current_low < lows[i - j] for j in range(1, left_bars + 1))
-            
-            # Check that the current low is lower than all right_bars following candles
-            right_valid = all(current_low < lows[i + j] for j in range(1, right_bars + 1))
-            
-            if left_valid and right_valid:
-                swing_lows.append((i, current_low))
-        
-        return swing_lows
-    
     @staticmethod
     def check_ifvg_reversal(df):
         subset = df.iloc[-5:].copy().dropna()
@@ -383,8 +319,7 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     results = []
     
     for tf in ["1D", "1W", "1M", "6M"]:
-        if tf not in data_map or len(data_map[tf]) < 7:  # Need at least 7 candles for swing detection (3+1+3)
-            continue
+        if tf not in data_map or len(data_map[tf]) < 10: continue # Need history for swings
         df = data_map[tf].copy()
         
         # Calculate Indicators
@@ -397,81 +332,58 @@ def scan_logic(ticker, df_d, df_m, scan_type):
         price = round(curr['Close'], 2)
 
         # ----------------------------------------
-        # FVG SCAN (SWING HIGH/LOW BREAKOUT LOGIC)
+        # FVG SCAN (NEW SNIPER LOGIC)
         # ----------------------------------------
         if "FVG" in scan_type:
-            # Need at least 3 candles for FVG detection + 7 for swing detection
-            if len(df) < 7:
-                continue
+            # Need at least 3 candles for FVG detection
+            if len(df) < 3: continue
             
-            # Get the last 3 candles for FVG check
+            # 1. Identify Significant Swings (Rolling 7 window)
+            df = MathWiz.identify_significant_swings(df)
+            
+            # 2. Check FVG formation on LATEST candle
             # Candle indices: -3 (oldest), -2 (middle), -1 (current/latest)
-            candle_1_high = df['High'].iloc[-3]  # High of candle 1 (oldest of the 3)
-            candle_1_low = df['Low'].iloc[-3]    # Low of candle 1
-            candle_3_high = df['High'].iloc[-1]  # High of candle 3 (current)
-            candle_3_low = df['Low'].iloc[-1]    # Low of candle 3 (current)
-            current_close = df['Close'].iloc[-1]  # Current candle's close
+            c1_high = df['High'].iloc[-3]
+            c1_low = df['Low'].iloc[-3]
+            c3_high = df['High'].iloc[-1]
+            c3_low = df['Low'].iloc[-1]
             
-            # BULLISH FVG: Low of candle 3 > High of candle 1 (gap UP between them)
-            # This means there's unfilled space - price jumped up leaving a gap
-            latest_has_bull_fvg = candle_3_low > candle_1_high
+            # Bullish FVG: Current Low > Candle[n-2] High
+            latest_has_bull_fvg = c3_low > c1_high
             
-            # BEARISH FVG: High of candle 3 < Low of candle 1 (gap DOWN between them)
-            # This means there's unfilled space - price dropped leaving a gap
-            latest_has_bear_fvg = candle_3_high < candle_1_low
-
-            # --- BULLISH FVG BREAKOUT (The "Sniper Entry") ---
-            # Conditions:
-            # 1. Identify a significant swing high (high not taken out by 3 preceding AND 3 following candles)
-            # 2. Latest candle formed a Bullish FVG (Low > High of candle 2 periods ago)
-            # 3. Latest candle closes above the identified swing high
+            # Bearish FVG: Current High < Candle[n-2] Low
+            latest_has_bear_fvg = c3_high < c1_low
+            
+            # --- BULLISH FVG BREAKOUT ---
+            # Condition 1: Latest candle forms Bullish Gap
+            # Condition 2: Latest candle Closes > Previous Significant Swing High
             if "Bullish" in scan_type and latest_has_bull_fvg:
-                # Find significant swing highs BEFORE the current candle
-                # We exclude the last 3 candles from swing detection since they need 3 candles after them
-                # So we look at df[:-3] to find confirmed swing highs
-                df_for_swings = df.iloc[:-3]  # Exclude last 3 candles
+                # Get historical swing highs (ignoring recent unchecked candles to be safe, though rolling handles it)
+                # We filter for True in Is_Swing_High
+                swing_highs = df[df['Is_Swing_High']]
                 
-                if len(df_for_swings) >= 7:  # Need at least 7 candles for swing detection
-                    swing_highs = MathWiz.find_significant_swing_highs(df_for_swings, left_bars=3, right_bars=3)
+                # We need the most recent swing high that occurred BEFORE the current move
+                # Since rolling(7, center=True) leaves the last 3 candles as NaN/False,
+                # any identified swing high is guaranteed to be at least 3 candles old.
+                if not swing_highs.empty:
+                    last_swing_high_val = swing_highs['High'].iloc[-1]
                     
-                    if swing_highs:
-                        # Get the most recent (highest index) swing high
-                        most_recent_swing = swing_highs[-1]
-                        swing_high_value = most_recent_swing[1]
-                        swing_high_idx = most_recent_swing[0]
-                        
-                        # Check if current close breaks above this swing high
-                        if current_close > swing_high_value:
-                            # Calculate how many bars ago the swing high formed
-                            bars_ago = len(df) - 1 - swing_high_idx
-                            info_txt = f"BullFVG✓ SwingHi:{round(swing_high_value, 2)} ({bars_ago} bars ago)"
-                            results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
+                    if curr['Close'] > last_swing_high_val:
+                        info_txt = f"BullBreakout🚀 SwingHi:{round(last_swing_high_val, 2)}"
+                        results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
-            # --- BEARISH FVG BREAKDOWN (The "Floor Drop") ---
-            # Conditions:
-            # 1. Identify a significant swing low (low not taken out by 3 preceding AND 3 following candles)
-            # 2. Latest candle formed a Bearish FVG (High < Low of candle 2 periods ago)
-            # 3. Latest candle closes below the identified swing low
+            # --- BEARISH FVG BREAKDOWN ---
+            # Condition 1: Latest candle forms Bearish Gap
+            # Condition 2: Latest candle Closes < Previous Significant Swing Low
             if "Bearish" in scan_type and latest_has_bear_fvg:
-                # Find significant swing lows BEFORE the current candle
-                # We exclude the last 3 candles from swing detection since they need 3 candles after them
-                df_for_swings = df.iloc[:-3]  # Exclude last 3 candles
+                swing_lows = df[df['Is_Swing_Low']]
                 
-                if len(df_for_swings) >= 7:  # Need at least 7 candles for swing detection
-                    swing_lows = MathWiz.find_significant_swing_lows(df_for_swings, left_bars=3, right_bars=3)
+                if not swing_lows.empty:
+                    last_swing_low_val = swing_lows['Low'].iloc[-1]
                     
-                    if swing_lows:
-                        # Get the most recent (highest index) swing low
-                        most_recent_swing = swing_lows[-1]
-                        swing_low_value = most_recent_swing[1]
-                        swing_low_idx = most_recent_swing[0]
-                        
-                        # Check if current close breaks below this swing low
-                        if current_close < swing_low_value:
-                            # Calculate how many bars ago the swing low formed
-                            bars_ago = len(df) - 1 - swing_low_idx
-                            info_txt = f"BearFVG✓ SwingLo:{round(swing_low_value, 2)} ({bars_ago} bars ago)"
-                            results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
+                    if curr['Close'] < last_swing_low_val:
+                        info_txt = f"BearBreakdown🔻 SwingLo:{round(last_swing_low_val, 2)}"
+                        results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
         # ----------------------------------------
         # ORDER BLOCKS
@@ -542,7 +454,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v6.3")
+    st.title("Prath's Sniper v6.2")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -564,7 +476,7 @@ def main():
     with c1:
         st.write("#### 🐂 Bullish")
         
-        if st.button("Bullish FVG", help="Latest candle created a Bullish FVG AND closes above a significant swing high (high not broken by 3 candles before & after)."): scan_request = "Bullish FVG"
+        if st.button("Bullish FVG", help="Latest candle forms Bullish FVG AND Closes above recent Significant Swing High."): scan_request = "Bullish FVG"
         if st.button("Bullish OB", help="Last down-candle before an impulsive upward move that broke structure."): scan_request = "Bullish Order Block"
         if st.button("Bullish iFVG", help="A failed Bearish Gap that price has reclaimed and flipped into support."): scan_request = "Bullish iFVG"
 
@@ -572,7 +484,7 @@ def main():
     with c2:
         st.write("#### 🐻 Bearish")
         
-        if st.button("Bearish FVG", help="Latest candle created a Bearish FVG AND closes below a significant swing low (low not broken by 3 candles before & after)."): scan_request = "Bearish FVG"
+        if st.button("Bearish FVG", help="Latest candle forms Bearish FVG AND Closes below recent Significant Swing Low."): scan_request = "Bearish FVG"
         if st.button("Bearish OB", help="Last up-candle before an impulsive downward move that broke structure."): scan_request = "Bearish Order Block"
         if st.button("Bearish iFVG", help="A failed Bullish Gap that price has broken below and flipped into resistance."): scan_request = "Bearish iFVG"
 
