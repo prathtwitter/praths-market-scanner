@@ -252,13 +252,41 @@ def resample_custom(df, timeframe):
         if timeframe == "1D": return df.resample("1D").agg(agg).dropna()
         if timeframe == "1W": return df.resample("W-FRI").agg(agg).dropna()
         if timeframe == "1M": return df.resample("ME").agg(agg).dropna()
+        
+        # For quarterly and above, first resample to monthly
         df_m = df.resample('MS').agg(agg).dropna()
-        if timeframe == "3M": return df_m.resample('QS').agg(agg).dropna()
+        
+        if timeframe == "3M": 
+            return df_m.resample('QS').agg(agg).dropna()
+        
         if timeframe == "6M":
-            # Use 6-month start frequency for proper resampling
-            return df_m.resample('6MS').agg(agg).dropna()
-        if timeframe == "12M": return df_m.resample('YS').agg(agg).dropna()
-    except: return df
+            # Manual 6-month grouping: H1 = Jan-Jun, H2 = Jul-Dec
+            df_m = df_m.copy()
+            df_m['year'] = df_m.index.year
+            df_m['half'] = np.where(df_m.index.month <= 6, 1, 2)
+            
+            # Group by year and half
+            grouped = df_m.groupby(['year', 'half']).agg({
+                'Open': 'first',
+                'High': 'max', 
+                'Low': 'min',
+                'Close': 'last',
+                'Volume': 'sum'
+            })
+            
+            # Create proper datetime index for the result
+            new_index = []
+            for (year, half) in grouped.index:
+                month = 1 if half == 1 else 7
+                new_index.append(pd.Timestamp(year=year, month=month, day=1))
+            
+            grouped.index = pd.DatetimeIndex(new_index)
+            return grouped.sort_index()
+        
+        if timeframe == "12M": 
+            return df_m.resample('YS').agg(agg).dropna()
+    except Exception as e:
+        return df
     return df
 
 # ==========================================
@@ -298,47 +326,46 @@ def scan_logic(ticker, df_d, df_m, scan_type):
             # Need at least 3 candles for FVG detection
             if len(df) < 3:
                 continue
-                
-            # Pre-calculate FVGs for entire history
-            # FVG is detected on candle 3 (index i) where:
-            #   Bullish: Low[i] > High[i-2] (gap up, imbalance)
-            #   Bearish: High[i] < Low[i-2] (gap down, imbalance)
+            
+            # Get the last 3 candles for FVG check
+            # Candle indices: -3 (oldest), -2 (middle), -1 (current/latest)
+            candle_1_high = df['High'].iloc[-3]  # High of candle 1 (oldest of the 3)
+            candle_1_low = df['Low'].iloc[-3]    # Low of candle 1
+            candle_3_high = df['High'].iloc[-1]  # High of candle 3 (current)
+            candle_3_low = df['Low'].iloc[-1]    # Low of candle 3 (current)
+            
+            # BULLISH FVG: Low of candle 3 > High of candle 1 (gap UP between them)
+            # This means there's unfilled space - price jumped up leaving a gap
+            latest_has_bull_fvg = candle_3_low > candle_1_high
+            
+            # BEARISH FVG: High of candle 3 < Low of candle 1 (gap DOWN between them)
+            # This means there's unfilled space - price dropped leaving a gap
+            latest_has_bear_fvg = candle_3_high < candle_1_low
+            
+            # Pre-calculate historical FVGs
             df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
-            
-            # Get current candle values
-            curr_low = df['Low'].iloc[-1]
-            curr_high = df['High'].iloc[-1]
-            high_2_bars_ago = df['High'].iloc[-3]
-            low_2_bars_ago = df['Low'].iloc[-3]
-            
-            # Check if latest candle has a Bullish FVG (gap must be positive)
-            latest_has_bull_fvg = curr_low > high_2_bars_ago
-            # Check if latest candle has a Bearish FVG (gap must be negative)
-            latest_has_bear_fvg = curr_high < low_2_bars_ago
             
             # --- BULLISH FVG BREAKOUT ---
             # Condition: Latest candle creates Bullish FVG AND breaks swing high from most recent Bearish FVG
             if "Bullish" in scan_type and latest_has_bull_fvg:
                 # Find most recent Bearish FVG BEFORE the current candle
-                # Bear_FVG is True at index i (candle 3 of pattern)
-                # Candle 1 of that pattern is at index i-2
                 bear_fvg_indices = np.where(df['Bear_FVG'].values)[0]
-                # Exclude last 1 candle (we want historical bearish FVGs only, not current)
+                # Exclude current candle (index -1 = len(df)-1)
                 bear_fvg_indices = bear_fvg_indices[bear_fvg_indices < len(df) - 1]
                 
                 if len(bear_fvg_indices) > 0:
-                    # Get the most recent bearish FVG (candle 3 position)
+                    # Get the most recent bearish FVG (this is candle 3 of that pattern)
                     last_bear_fvg_candle3_idx = bear_fvg_indices[-1]
-                    # Candle 1 of the bearish FVG pattern is 2 positions before candle 3
-                    candle1_idx = last_bear_fvg_candle3_idx - 2
+                    # Candle 1 of that bearish FVG pattern is 2 positions before its candle 3
+                    bear_fvg_candle1_idx = last_bear_fvg_candle3_idx - 2
                     
-                    if candle1_idx >= 0:
+                    if bear_fvg_candle1_idx >= 0:
                         # Swing High = High of Candle 1 of the Bearish FVG
-                        swing_high = df['High'].iloc[candle1_idx]
+                        swing_high = df['High'].iloc[bear_fvg_candle1_idx]
                         
                         # Trigger: Current candle's Close breaks above this Swing High
                         if curr['Close'] > swing_high:
-                            info_txt = f"Swing High: {round(swing_high, 2)}"
+                            info_txt = f"BullFVG✓ SwingHi:{round(swing_high, 2)}"
                             results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
             # --- BEARISH FVG BREAKDOWN ---
@@ -350,18 +377,18 @@ def scan_logic(ticker, df_d, df_m, scan_type):
                 bull_fvg_indices = bull_fvg_indices[bull_fvg_indices < len(df) - 1]
                 
                 if len(bull_fvg_indices) > 0:
-                    # Get the most recent bullish FVG (candle 3 position)
+                    # Get the most recent bullish FVG (this is candle 3 of that pattern)
                     last_bull_fvg_candle3_idx = bull_fvg_indices[-1]
-                    # Candle 1 of the bullish FVG pattern is 2 positions before candle 3
-                    candle1_idx = last_bull_fvg_candle3_idx - 2
+                    # Candle 1 of that bullish FVG pattern is 2 positions before its candle 3
+                    bull_fvg_candle1_idx = last_bull_fvg_candle3_idx - 2
                     
-                    if candle1_idx >= 0:
+                    if bull_fvg_candle1_idx >= 0:
                         # Swing Low = Low of Candle 1 of the Bullish FVG
-                        swing_low = df['Low'].iloc[candle1_idx]
+                        swing_low = df['Low'].iloc[bull_fvg_candle1_idx]
                         
                         # Trigger: Current candle's Close breaks below this Swing Low
                         if curr['Close'] < swing_low:
-                            info_txt = f"Swing Low: {round(swing_low, 2)}"
+                            info_txt = f"BearFVG✓ SwingLo:{round(swing_low, 2)}"
                             results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
         # ----------------------------------------
