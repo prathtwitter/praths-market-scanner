@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Market Scanner v3.3", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v3.4", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -124,8 +124,8 @@ class AI_Analyst:
         """
         
         try:
-            # Using the standard 1.5 Flash model which is currently stable
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # Using Gemini 3 Flash Preview as requested
+            model = genai.GenerativeModel('gemini-3-flash-preview')
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
@@ -201,11 +201,7 @@ class MathWiz:
 @st.cache_data
 def load_tickers(market_choice):
     if "India" in market_choice:
-        # NIFTY 200 List (Approximation for demo, ideally load from CSV)
-        # In a real app, ensure 'ind_nifty200list.csv' exists or fetch dynamically
-        # For this fix, we will fallback to the existing 'ind_tickers.csv' logic but limit it or rename it
-        # Assuming you want to replace the NIFTY 500 list with NIFTY 200
-        filename = "ind_tickers.csv" # You should update this file content to NIFTY 200 in your repo
+        filename = "ind_tickers.csv"
     else:
         filename = "us_tickers.csv"
         
@@ -215,7 +211,7 @@ def load_tickers(market_choice):
         clean = [str(t).strip().upper() for t in df.iloc[:, 0].tolist()]
         if "India" in market_choice:
             clean = [t if t.endswith(".NS") else f"{t}.NS" for t in clean]
-            # --- UPDATE: Limit to 200 for Nifty 200 if the file has more ---
+            # --- LIMIT TO TOP 200 FOR NIFTY ---
             clean = clean[:200] 
         return clean
     except: return []
@@ -272,6 +268,7 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
         curr, prev = df.iloc[-1], df.iloc[-2]
         price = round(curr['Close'], 2)
 
+        # FVG SNIPER
         if curr['Bull_FVG']:
             past = df[df['Is_High']]
             if not past.empty and curr['Close'] > past['High'].iloc[-1] and prev['Close'] <= past['High'].iloc[-1]:
@@ -282,6 +279,7 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
             if not past.empty and curr['Close'] < past['Low'].iloc[-1] and prev['Close'] >= past['Low'].iloc[-1]:
                 results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf, "Chop": current_chop, "Info": ""})
 
+        # ORDER BLOCKS
         sub = df.iloc[-4:].copy()
         if len(sub) == 4:
             c0, c1, c2, c3 = sub.iloc[0], sub.iloc[1], sub.iloc[2], sub.iloc[3]
@@ -292,6 +290,7 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
                 if c3['High']<c1['Low'] and c3['Close']<c0['Low']:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf, "Chop": current_chop, "Info": ""})
         
+        # iFVG
         if tf in ["1D", "1W", "1M"]:
             ifvg = MathWiz.check_ifvg_reversal(df)
             if ifvg: results.append({"Ticker": ticker, "Price": price, "Type": f"{ifvg}_iFVG", "TF": tf, "Chop": current_chop, "Info": ""})
@@ -373,7 +372,7 @@ def main():
 
     st.sidebar.divider()
     
-    st.title("Prath's Market Scanner v3.3")
+    st.title("Prath's Market Scanner v3.4")
     
     market = st.sidebar.selectbox("Select Market", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
     tickers = load_tickers(market)
@@ -405,7 +404,7 @@ def main():
         
         df_all = pd.DataFrame(all_res)
         
-        # --- KEYERROR FIX: Ensure 'Info' exists ---
+        # --- KEYERROR FIX: Ensure 'Info' exists for every row ---
         if not df_all.empty and 'Info' not in df_all.columns:
             df_all['Info'] = ""
         
