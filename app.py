@@ -108,7 +108,7 @@ class AI_Analyst:
         
         # 3. Call Gemini
         try:
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-3-flash-preview')  # or the stable version once available
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
