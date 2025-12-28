@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Market Scanner v3.2", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v3.3", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -56,7 +56,7 @@ def check_password():
     return True
 
 # ==========================================
-# 3. AI ANALYST ENGINE (Using Gemini 3 Flash Preview)
+# 3. AI ANALYST ENGINE
 # ==========================================
 class AI_Analyst:
     @staticmethod
@@ -64,6 +64,7 @@ class AI_Analyst:
         if not AI_AVAILABLE: return "AI Libraries not installed."
         try:
             with DDGS() as ddgs:
+                # Basic query for news
                 query = f"{ticker} stock news financial results analysis"
                 results = list(ddgs.news(query, max_results=2))
                 news_summary = ""
@@ -123,8 +124,8 @@ class AI_Analyst:
         """
         
         try:
-            # UPDATED: Using Gemini 3 Flash Preview as requested
-            model = genai.GenerativeModel('gemini-3-flash-preview') 
+            # Using the standard 1.5 Flash model which is currently stable
+            model = genai.GenerativeModel('gemini-1.5-flash')
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
@@ -199,12 +200,23 @@ class MathWiz:
 # ==========================================
 @st.cache_data
 def load_tickers(market_choice):
-    filename = "ind_tickers.csv" if "India" in market_choice else "us_tickers.csv"
+    if "India" in market_choice:
+        # NIFTY 200 List (Approximation for demo, ideally load from CSV)
+        # In a real app, ensure 'ind_nifty200list.csv' exists or fetch dynamically
+        # For this fix, we will fallback to the existing 'ind_tickers.csv' logic but limit it or rename it
+        # Assuming you want to replace the NIFTY 500 list with NIFTY 200
+        filename = "ind_tickers.csv" # You should update this file content to NIFTY 200 in your repo
+    else:
+        filename = "us_tickers.csv"
+        
     if not os.path.exists(filename): return []
     try:
         df = pd.read_csv(filename)
         clean = [str(t).strip().upper() for t in df.iloc[:, 0].tolist()]
-        if "India" in market_choice: clean = [t if t.endswith(".NS") else f"{t}.NS" for t in clean]
+        if "India" in market_choice:
+            clean = [t if t.endswith(".NS") else f"{t}.NS" for t in clean]
+            # --- UPDATE: Limit to 200 for Nifty 200 if the file has more ---
+            clean = clean[:200] 
         return clean
     except: return []
 
@@ -263,26 +275,26 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
         if curr['Bull_FVG']:
             past = df[df['Is_High']]
             if not past.empty and curr['Close'] > past['High'].iloc[-1] and prev['Close'] <= past['High'].iloc[-1]:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf, "Chop": current_chop})
+                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf, "Chop": current_chop, "Info": ""})
         
         if curr['Bear_FVG']:
             past = df[df['Is_Low']]
             if not past.empty and curr['Close'] < past['Low'].iloc[-1] and prev['Close'] >= past['Low'].iloc[-1]:
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf, "Chop": current_chop})
+                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf, "Chop": current_chop, "Info": ""})
 
         sub = df.iloc[-4:].copy()
         if len(sub) == 4:
             c0, c1, c2, c3 = sub.iloc[0], sub.iloc[1], sub.iloc[2], sub.iloc[3]
             if (c0['Close']<c0['Open'] and c1['Close']>c1['Open'] and c2['Close']>c2['Open'] and c3['Close']>c3['Open']):
                 if c3['Low']>c1['High'] and c3['Close']>c0['High']:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf, "Chop": current_chop})
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf, "Chop": current_chop, "Info": ""})
             if (c0['Close']>c0['Open'] and c1['Close']<c1['Open'] and c2['Close']<c2['Open'] and c3['Close']<c3['Open']):
                 if c3['High']<c1['Low'] and c3['Close']<c0['Low']:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf, "Chop": current_chop})
+                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf, "Chop": current_chop, "Info": ""})
         
         if tf in ["1D", "1W", "1M"]:
             ifvg = MathWiz.check_ifvg_reversal(df)
-            if ifvg: results.append({"Ticker": ticker, "Price": price, "Type": f"{ifvg}_iFVG", "TF": tf, "Chop": current_chop})
+            if ifvg: results.append({"Ticker": ticker, "Price": price, "Type": f"{ifvg}_iFVG", "TF": tf, "Chop": current_chop, "Info": ""})
 
     # SUPPORT
     sup_tf = []
@@ -293,14 +305,14 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
         c_val = round(c3m.iloc[-1], 2) if not c3m.empty else 0
         results.append({"Ticker": ticker, "Price": round(data_map["3M"]['Close'].iloc[-1], 2), "Type": "Strong_Support", "TF": "Multiple", "Chop": c_val, "Info": ",".join(sup_tf)})
 
-    # SQUEEZES (Added back to ensure proper 'Info' handling later)
+    # SQUEEZE/REVERSAL
     if not data_map["1W"].empty:
         c_w = MathWiz.calculate_choppiness(data_map["1W"]['High'], data_map["1W"]['Low'], data_map["1W"]['Close']).iloc[-1]
-        if c_w < 25: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Type": "Reversal", "TF": "1W", "Chop": round(c_w, 2)})
-        if c_w > 59: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Chop": round(c_w, 2)})
+        if c_w < 25: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Type": "Reversal", "TF": "1W", "Chop": round(c_w, 2), "Info": ""})
+        if c_w > 59: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Chop": round(c_w, 2), "Info": ""})
     if not data_map["1D"].empty:
         c_d = MathWiz.calculate_choppiness(data_map["1D"]['High'], data_map["1D"]['Low'], data_map["1D"]['Close']).iloc[-1]
-        if c_d > 59: results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1D", "Chop": round(c_d, 2)})
+        if c_d > 59: results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1D", "Chop": round(c_d, 2), "Info": ""})
 
     return results
 
@@ -308,14 +320,16 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
 # 7. MAIN UI
 # ==========================================
 def display_interactive_table(df, key_prefix):
+    """
+    Displays a dataframe with selection enabled. Returns the selected row.
+    """
     if df.empty:
         st.caption("No setups found.")
         return None
         
-    df_display = df.copy()
-    
-    st.dataframe(
-        df_display,
+    # Configure columns
+    event = st.dataframe(
+        df,
         use_container_width=True,
         hide_index=True,
         on_select="rerun", 
@@ -323,10 +337,11 @@ def display_interactive_table(df, key_prefix):
         key=f"table_{key_prefix}"
     )
     
-    selection_state = st.session_state.get(f"table_{key_prefix}", {})
-    if selection_state and "rows" in selection_state and selection_state["rows"]:
-        selected_idx = selection_state["rows"][0]
-        return df_display.iloc[selected_idx]
+    # NEW LOGIC: Directly check the event returned by st.dataframe
+    if len(event.selection.rows) > 0:
+        selected_index = event.selection.rows[0]
+        return df.iloc[selected_index]
+    
     return None
 
 def main():
@@ -358,9 +373,9 @@ def main():
 
     st.sidebar.divider()
     
-    st.title("Prath's Market Scanner v3.2")
+    st.title("Prath's Market Scanner v3.3")
     
-    market = st.sidebar.selectbox("Select Market", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 500)"])
+    market = st.sidebar.selectbox("Select Market", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
     tickers = load_tickers(market)
     
     if st.sidebar.button("🔄 Run Analysis", type="primary"):
@@ -390,25 +405,26 @@ def main():
         
         df_all = pd.DataFrame(all_res)
         
-        # --- FIXED KEYERROR LOGIC ---
-        # Ensure 'Info' exists for all rows to prevent KeyError when selecting cols
+        # --- KEYERROR FIX: Ensure 'Info' exists ---
         if not df_all.empty and 'Info' not in df_all.columns:
             df_all['Info'] = ""
         
-        st.info("💡 **Interactive Mode:** Select any row in the tables below to generate an AI Deep Dive Analysis.")
+        st.info("💡 **Interactive Mode:** Click the checkbox next to any stock to trigger the AI Deep Dive.")
         
         def get_df(type_n, tf=None):
             if df_all.empty: return pd.DataFrame()
             mask = (df_all['Type'] == type_n)
             if tf: mask &= (df_all['TF'] == tf)
             # Safe selection
-            cols = ['Ticker', 'Price', 'Chop', 'TF']
-            if 'Info' in df_all.columns: cols.append('Info')
-            return df_all[mask][cols]
+            cols = ['Ticker', 'Price', 'Chop', 'TF', 'Info']
+            # Filter columns that actually exist to be safe
+            valid_cols = [c for c in cols if c in df_all.columns]
+            return df_all[mask][valid_cols]
 
         c1, c2 = st.columns(2)
         selected_stock_data = None
         
+        # --- BULLISH COLUMN ---
         with c1:
             st.header("🐂 Bullish Scans")
             st.subheader("FVG Breakouts")
@@ -423,6 +439,7 @@ def main():
             sel = display_interactive_table(get_df("Bull_iFVG_iFVG"), "bif")
             if sel is not None: selected_stock_data = (sel, "Bull_iFVG")
 
+        # --- BEARISH COLUMN ---
         with c2:
             st.header("🐻 Bearish Scans")
             st.subheader("FVG Breakdowns")
@@ -437,15 +454,13 @@ def main():
             sel = display_interactive_table(get_df("Bear_iFVG_iFVG"), "brif")
             if sel is not None: selected_stock_data = (sel, "Bear_iFVG")
 
+        # --- FULL WIDTH SECTIONS ---
         st.divider()
         st.subheader("Strong Support (3M/6M/12M)")
         if not df_all.empty:
             sup_df = df_all[df_all['Type'] == "Strong_Support"]
             if not sup_df.empty:
-                # Explicitly select only existing columns
-                cols = ['Ticker', 'Price', 'Chop']
-                if 'Info' in sup_df.columns: cols.append('Info')
-                sel = display_interactive_table(sup_df[cols], "sup")
+                sel = display_interactive_table(sup_df, "sup")
                 if sel is not None: selected_stock_data = (sel, "Strong_Support")
         
         st.divider()
@@ -460,8 +475,10 @@ def main():
             sel = display_interactive_table(get_df("Squeeze", "1W"), "sq1w")
             if sel is not None: selected_stock_data = (sel, "Squeeze")
 
-        if selected_stock_data:
-            row, s_type = selected_stock_data
+        # --- DEEP DIVE MODAL ---
+        if selected_stock_data is not None:
+            row = selected_stock_data[0] if isinstance(selected_stock_data, tuple) else selected_stock_data
+            s_type = selected_stock_data[1] if isinstance(selected_stock_data, tuple) else row.get('Type', 'Signal')
             ticker = row['Ticker']
             
             @st.dialog(f"🧠 Deep Dive: {ticker}")
