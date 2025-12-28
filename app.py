@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v5.4", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v5.5", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -43,9 +43,11 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
+    /* Chart Image Styling */
     .stImage img {
         border-radius: 5px;
         border: 1px solid #333;
+        margin-bottom: 15px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -265,23 +267,30 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     except: return []
 
     results = []
+    
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         df = data_map[tf].copy()
+        
         chop = 0
         if "Chop" not in df.columns:
             chop_s = MathWiz.calculate_choppiness(df['High'], df['Low'], df['Close'])
             chop = round(chop_s.iloc[-1], 2) if not chop_s.empty else 0
-        curr = df.iloc[-1]; price = round(curr['Close'], 2)
+        
+        curr = df.iloc[-1]
+        price = round(curr['Close'], 2)
 
         if "FVG" in scan_type:
             df['Bull'], df['Bear'] = MathWiz.find_fvg(df)
             df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
+            
             if "Bullish" in scan_type and curr['Bull']:
+                # Relaxed: Look for break in last 3 candles
                 past_swings = df[df['Is_H']]
                 if not past_swings.empty:
                     if (df['Close'].iloc[-3:] > past_swings['High'].iloc[-1]).any():
                         results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
+            
             if "Bearish" in scan_type and curr['Bear']:
                 past_swings = df[df['Is_L']]
                 if not past_swings.empty:
@@ -320,10 +329,12 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     if "Squeeze" in scan_type:
          if not data_map["1D"].empty:
             c_d = MathWiz.calculate_choppiness(data_map["1D"]['High'], data_map["1D"]['Low'], data_map["1D"]['Close']).iloc[-1]
-            if c_d > 59: results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Chop": round(c_d, 2), "TF": "1D", "Info": ""})
+            if c_d > 59:
+                 results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Chop": round(c_d, 2), "TF": "1D", "Info": ""})
          if not data_map["1W"].empty:
             c_w = MathWiz.calculate_choppiness(data_map["1W"]['High'], data_map["1W"]['Low'], data_map["1W"]['Close']).iloc[-1]
-            if c_w > 59: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Chop": round(c_w, 2), "TF": "1W", "Info": ""})
+            if c_w > 59:
+                 results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Chop": round(c_w, 2), "TF": "1W", "Info": ""})
 
     return results
 
@@ -351,7 +362,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v5.4")
+    st.title("Prath's Sniper v5.5")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -364,8 +375,9 @@ def main():
         
     st.write("### 🎯 Select Strategy to Scan")
     
-    # REPO BASE URL
-    repo_url = "https://raw.githubusercontent.com/prathtwitter/praths-market-scanner/main/"
+    # --- REPO BASE URL ---
+    # We use 'raw.githubusercontent.com' to get the actual image file
+    repo_base = "https://raw.githubusercontent.com/prathtwitter/praths-market-scanner/main/"
     
     c1, c2, c3 = st.columns(3)
     scan_request = None
@@ -374,34 +386,34 @@ def main():
         st.header("🐂 Bullish")
         
         if st.button("Bullish FVG Breakouts"): scan_request = "Bullish FVG"
-        st.image(f"{repo_url}FVG%20Bullish%20Breakout.jpg", use_container_width=True)
+        st.image(f"{repo_base}FVG%20Bullish%20Breakout.jpg", use_container_width=True)
         
         if st.button("Bullish Order Blocks"): scan_request = "Bullish Order Block"
-        st.image(f"{repo_url}Bullish%20Order%20Block.jpg", use_container_width=True)
+        st.image(f"{repo_base}Bullish%20Order%20Block.jpg", use_container_width=True)
         
         if st.button("Bullish iFVG Reversal"): scan_request = "Bullish iFVG"
-        st.image("https://placehold.co/400x250/162b26/00CC96?text=Bullish+iFVG+(Gap+Flip)", use_container_width=True) # Fallback if image missing
+        st.image(f"{repo_base}Bullish%20iFVG.jpg", use_container_width=True)
 
     with c2:
         st.header("🐻 Bearish")
         
         if st.button("Bearish FVG Breakdowns"): scan_request = "Bearish FVG"
-        st.image(f"{repo_url}FVG%20Bearish%20Breakdown.jpg", use_container_width=True)
+        st.image(f"{repo_base}FVG%20Bearish%20Breakdown.jpg", use_container_width=True)
         
         if st.button("Bearish Order Blocks"): scan_request = "Bearish Order Block"
-        st.image(f"{repo_url}Bearish%20Order%20Block.jpg", use_container_width=True)
+        st.image(f"{repo_base}Bearish%20Order%20Block.jpg", use_container_width=True)
         
         if st.button("Bearish iFVG Reversal"): scan_request = "Bearish iFVG"
-        st.image("https://placehold.co/400x250/162b26/00CC96?text=Bearish+iFVG+(Gap+Flip)", use_container_width=True)
+        st.image(f"{repo_base}Bearish%20iFVG.jpg", use_container_width=True)
 
     with c3:
         st.header("⚡ Volatility")
         
         if st.button("Strong Support Zones"): scan_request = "Strong Support"
-        st.image(f"{repo_url}Strong%20Support.jpg", use_container_width=True)
+        st.image(f"{repo_base}Strong%20Support.jpg", use_container_width=True)
         
         if st.button("Volatility Squeezes"): scan_request = "Squeeze"
-        st.image(f"{repo_url}Volatility%20Squeeze.jpg", use_container_width=True)
+        st.image(f"{repo_base}Volatility%20Squeeze.jpg", use_container_width=True)
 
     if scan_request:
         st.divider()
