@@ -253,12 +253,11 @@ def resample_custom(df, timeframe):
         if timeframe == "1W": return df.resample("W-FRI").agg(agg).dropna()
         if timeframe == "1M": return df.resample("ME").agg(agg).dropna()
         df_m = df.resample('MS').agg(agg).dropna()
-        if timeframe == "3M": return df_m.resample('QE').agg(agg).dropna()
+        if timeframe == "3M": return df_m.resample('QS').agg(agg).dropna()
         if timeframe == "6M":
-            df_m['Y'], df_m['H'] = df_m.index.year, np.where(df_m.index.month <= 6, 1, 2)
-            df_6m = df_m.groupby(['Y', 'H']).agg(agg)
-            return df_6m
-        if timeframe == "12M": return df_m.resample('YE').agg(agg).dropna()
+            # Use 6-month start frequency for proper resampling
+            return df_m.resample('6MS').agg(agg).dropna()
+        if timeframe == "12M": return df_m.resample('YS').agg(agg).dropna()
     except: return df
     return df
 
@@ -296,16 +295,26 @@ def scan_logic(ticker, df_d, df_m, scan_type):
         # FVG SCAN (OPPOSING FVG BREAKOUT LOGIC)
         # ----------------------------------------
         if "FVG" in scan_type:
+            # Need at least 3 candles for FVG detection
+            if len(df) < 3:
+                continue
+                
             # Pre-calculate FVGs for entire history
             # FVG is detected on candle 3 (index i) where:
-            #   Bullish: Low[i] > High[i-2] (gap up)
-            #   Bearish: High[i] < Low[i-2] (gap down)
+            #   Bullish: Low[i] > High[i-2] (gap up, imbalance)
+            #   Bearish: High[i] < Low[i-2] (gap down, imbalance)
             df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
             
-            # Check if latest candle has a Bullish FVG
-            latest_has_bull_fvg = df['Bull_FVG'].iloc[-1] if len(df) > 2 else False
-            # Check if latest candle has a Bearish FVG
-            latest_has_bear_fvg = df['Bear_FVG'].iloc[-1] if len(df) > 2 else False
+            # Get current candle values
+            curr_low = df['Low'].iloc[-1]
+            curr_high = df['High'].iloc[-1]
+            high_2_bars_ago = df['High'].iloc[-3]
+            low_2_bars_ago = df['Low'].iloc[-3]
+            
+            # Check if latest candle has a Bullish FVG (gap must be positive)
+            latest_has_bull_fvg = curr_low > high_2_bars_ago
+            # Check if latest candle has a Bearish FVG (gap must be negative)
+            latest_has_bear_fvg = curr_high < low_2_bars_ago
             
             # --- BULLISH FVG BREAKOUT ---
             # Condition: Latest candle creates Bullish FVG AND breaks swing high from most recent Bearish FVG
@@ -314,7 +323,7 @@ def scan_logic(ticker, df_d, df_m, scan_type):
                 # Bear_FVG is True at index i (candle 3 of pattern)
                 # Candle 1 of that pattern is at index i-2
                 bear_fvg_indices = np.where(df['Bear_FVG'].values)[0]
-                # Exclude current candle (we want historical bearish FVGs only)
+                # Exclude last 1 candle (we want historical bearish FVGs only, not current)
                 bear_fvg_indices = bear_fvg_indices[bear_fvg_indices < len(df) - 1]
                 
                 if len(bear_fvg_indices) > 0:
