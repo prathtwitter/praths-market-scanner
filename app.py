@@ -128,8 +128,8 @@ class AI_Analyst:
         """
         
         try:
-            # Using 2.0-flash for maximum stability/speed
-            model = genai.GenerativeModel('gemini-2.0-flash')
+            # Using 2.0-flash-lite for higher free tier quota
+            model = genai.GenerativeModel('gemini-2.0-flash-lite')
             res = model.generate_content(prompt)
             return res.text
         except Exception as e:
