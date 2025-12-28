@@ -5,10 +5,18 @@ import numpy as np
 import os
 from concurrent.futures import ThreadPoolExecutor
 
+# --- NEW IMPORTS FOR AI ---
+try:
+    import google.generativeai as genai
+    from duckduckgo_search import DDGS
+    AI_AVAILABLE = True
+except ImportError:
+    AI_AVAILABLE = False
+
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Global Sniper", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v2.1 (AI)", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -16,6 +24,7 @@ st.markdown("""
     .stRadio > div { flex-direction: row; } 
     .stDataFrame { border: 1px solid #333; }
     h3 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    .stButton>button { width: 100%; border-radius: 5px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -24,25 +33,89 @@ st.markdown("""
 # ==========================================
 def check_password():
     """Returns `True` if the user had the correct password."""
+
     def password_entered():
+        """Checks whether a password entered by the user is correct."""
         if st.session_state["password"] == st.secrets.get("PASSWORD", "Sniper2025"):
             st.session_state["password_correct"] = True
-            del st.session_state["password"]
+            del st.session_state["password"]  # don't store password
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        st.text_input("Enter Access Key", type="password", on_change=password_entered, key="password")
+        st.text_input(
+            "Enter Access Key", type="password", on_change=password_entered, key="password"
+        )
         return False
     elif not st.session_state["password_correct"]:
-        st.text_input("Enter Access Key", type="password", on_change=password_entered, key="password")
+        st.text_input(
+            "Enter Access Key", type="password", on_change=password_entered, key="password"
+        )
         st.error("⛔ Access Denied")
         return False
     else:
         return True
 
 # ==========================================
-# 3. MATH WIZ (Advanced Logic)
+# 3. AI ANALYST ENGINE (Phase 4)
+# ==========================================
+class AI_Analyst:
+    @staticmethod
+    def get_market_news(ticker):
+        """Fetches top 3 recent news headlines for the ticker."""
+        if not AI_AVAILABLE: return "AI Libraries not installed."
+        
+        try:
+            with DDGS() as ddgs:
+                # Search for specific financial news
+                query = f"{ticker} stock news financial results or catalyst"
+                results = list(ddgs.news(query, max_results=3))
+                
+                news_summary = ""
+                for r in results:
+                    news_summary += f"- {r['title']} (Source: {r['source']})\n"
+                return news_summary if news_summary else "No recent specific news found."
+        except Exception as e:
+            return f"Could not fetch live news: {str(e)}"
+
+    @staticmethod
+    def generate_briefing(ticker, signal_type, price, timeframe):
+        """Sends data + news to Gemini to generate a strategic briefing."""
+        if not AI_AVAILABLE: return "⚠️ AI libraries missing. Please add google-generativeai to requirements.txt"
+        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ GEMINI_API_KEY missing in secrets."
+
+        # Configure Gemini
+        genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+        
+        # 1. Get Live Context
+        news_context = AI_Analyst.get_market_news(ticker)
+        
+        # 2. Construct the Prompt
+        prompt = f"""
+        You are a senior hedge fund strategist. 
+        The stock {ticker} has just triggered a **{signal_type}** signal on the {timeframe} timeframe at a price of ${price}.
+        
+        Here is the recent news context found:
+        {news_context}
+        
+        Please provide a concise, 3-sentence briefing:
+        1. **The Catalyst:** Based on the news, what is driving this move? (Earnings, macro, product launch, etc.)
+        2. **The Technical Context:** Why is this {signal_type} significant right now?
+        3. **Strategic Verdict:** Is this likely a trap or a valid continuation? (Be skeptical/realistic).
+        
+        Keep it professional, direct, and under 100 words.
+        """
+        
+        # 3. Call Gemini
+        try:
+            model = genai.GenerativeModel('gemini-1.5-flash')
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            return f"⚠️ AI Analysis failed: {str(e)}"
+
+# ==========================================
+# 4. MATH WIZ (Advanced Logic)
 # ==========================================
 class MathWiz:
     @staticmethod
@@ -87,20 +160,21 @@ class MathWiz:
     
     @staticmethod
     def check_ifvg_reversal(df):
+        # Take last 5 candles and drop NaNs
         subset = df.iloc[-5:].copy().dropna()
         if len(subset) < 5: return None
 
         c1 = subset.iloc[0]
         c3 = subset.iloc[2]
-        c5 = subset.iloc[4] 
+        c5 = subset.iloc[4] # Current candle
         
-        # Bullish iFVG
+        # Bullish iFVG Scan: Bear FVG (Drop) -> Bull FVG (Pop)
         is_bear_fvg_first = c3['High'] < c1['Low']
         is_bull_fvg_second = c5['Low'] > c3['High']
         if is_bear_fvg_first and is_bull_fvg_second:
             return 'Bull'
 
-        # Bearish iFVG
+        # Bearish iFVG Scan: Bull FVG (Pop) -> Bear FVG (Drop)
         is_bull_fvg_first = c3['Low'] > c1['High']
         is_bear_fvg_second = c5['High'] < c3['Low']
         if is_bull_fvg_first and is_bear_fvg_second:
@@ -132,49 +206,49 @@ class MathWiz:
         return False
 
 # ==========================================
-# 4. ROBUST DATA ENGINE
+# 5. ROBUST DATA ENGINE
 # ==========================================
 @st.cache_data
-def load_tickers(category):
-    # Map category to filename
-    file_map = {
-        "US Equity": "us_tickers.csv",
-        "Indian Equity": "ind_tickers.csv",
-        "Commodities": "commodity_tickers.csv",
-        "Crypto": "crypto_tickers.csv",
-        "Currency": "currency_tickers.csv"
-    }
-    
-    filename = file_map.get(category)
-    
-    if not filename or not os.path.exists(filename):
-        st.error(f"❌ '{filename}' not found. Please upload it to your repository.")
+def load_tickers(market_choice):
+    filename = "ind_tickers.csv" if "India" in market_choice else "us_tickers.csv"
+    if not os.path.exists(filename):
+        st.error(f"❌ '{filename}' not found. Ensure CSV files are in the repository.")
         return []
-        
     try:
         df = pd.read_csv(filename)
-        # Assume tickers are in the first column
         raw = df.iloc[:, 0].tolist()
         clean = [str(t).strip().upper() for t in raw]
+        if "India" in market_choice:
+            clean = [t if t.endswith(".NS") else f"{t}.NS" for t in clean]
         return clean
-    except Exception as e:
-        st.error(f"Error reading {filename}: {e}")
-        return []
+    except: return []
 
 @st.cache_data(ttl=3600)
 def fetch_bulk_data(tickers, interval="1d", period="2y"):
     if not tickers: return None
-    # yfinance handles threading internally now, usually better to let it handle it
     data = yf.download(tickers, period=period, interval=interval, group_by='ticker', progress=True, threads=True)
     return data
 
 def filter_top_5_by_cap(df_results):
     if df_results.empty: return df_results
-    # Simple sort by Price Descending as proxy for "importance" if Cap fails, 
-    # but primarily just return results. 
-    # For Crypto/Forex/Commodities, Market Cap isn't always available in standard fields.
-    # We will return Top 10 sorted by Price to ensure major movers are seen.
-    return df_results.sort_values(by='Price', ascending=False).head(10)
+    tickers = df_results['Ticker'].unique().tolist()
+    caps = []
+    
+    for t in tickers:
+        try:
+            val = yf.Ticker(t).fast_info['market_cap']
+            caps.append(val)
+        except:
+            try:
+                val = yf.Ticker(t).info.get('marketCap', 0)
+                caps.append(val)
+            except:
+                caps.append(0)
+    
+    cap_df = pd.DataFrame({'Ticker': tickers, 'MarketCap': caps})
+    merged = df_results.merge(cap_df, on='Ticker', how='left')
+    merged = merged.sort_values(by='MarketCap', ascending=False, na_position='last').head(5)
+    return merged.drop(columns=['MarketCap'])
 
 def resample_custom(df, timeframe):
     if df.empty: return df
@@ -202,20 +276,25 @@ def resample_custom(df, timeframe):
     return df
 
 # ==========================================
-# 5. PARALLEL ANALYSIS ENGINE
+# 6. PARALLEL ANALYSIS ENGINE
 # ==========================================
-
 def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     results = []
     try:
+        # 1D, 1W from Daily Data
         d_1d = resample_custom(df_daily_raw, "1D")
         d_1w = resample_custom(df_daily_raw, "1W")
+        
+        # 1M, 3M, 6M, 12M from Monthly Data
         d_1m = resample_custom(df_monthly_raw, "1M")
         d_3m = resample_custom(df_monthly_raw, "3M")
         d_6m = resample_custom(df_monthly_raw, "6M")
         d_12m = resample_custom(df_monthly_raw, "12M")
         
-        data_map = { "1D": d_1d, "1W": d_1w, "1M": d_1m, "3M": d_3m, "6M": d_6m, "12M": d_12m }
+        data_map = {
+            "1D": d_1d, "1W": d_1w, "1M": d_1m, 
+            "3M": d_3m, "6M": d_6m, "12M": d_12m
+        }
     except: return []
 
     # 1. FVG & ORDER BLOCKS & iFVG
@@ -230,7 +309,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         prev = df.iloc[-2]
         price = round(curr['Close'], 2)
 
-        # A. SNIPER FVG ENTRIES
+        # --- A. SNIPER FVG ENTRIES ---
         if curr['Bull_FVG']:
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
@@ -245,23 +324,22 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
                 if curr['Close'] < last_swing_low and prev['Close'] >= last_swing_low:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
 
-        # B. ORDER BLOCKS
+        # --- B. ORDER BLOCKS ---
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
-            # Bullish OB
+            
             if (c_anc['Close'] < c_anc['Open'] and 
                 c1['Close'] > c1['Open'] and c2['Close'] > c2['Open'] and c3['Close'] > c3['Open']):
                 if c3['Low'] > c1['High'] and c3['Close'] > c_anc['High']:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf})
 
-            # Bearish OB
             if (c_anc['Close'] > c_anc['Open'] and 
                 c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
                 if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
                     results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf})
         
-        # C. iFVG REVERSALS
+        # --- C. iFVG REVERSALS ---
         if tf in ["1D", "1W", "1M"]:
             ifvg_status = MathWiz.check_ifvg_reversal(df)
             if ifvg_status == "Bull":
@@ -283,15 +361,13 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
              "Info": ", ".join(sup_tf)
          })
 
-    # 3. REVERSALS & SQUEEZE
+    # 3. REVERSALS & SQUEEZES
     if not d_1w.empty:
         chop_series = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
         if not chop_series.empty and not pd.isna(chop_series.iloc[-1]):
             chop_w = chop_series.iloc[-1]
             if chop_w < 25:
                 results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Reversal", "Info": round(chop_w, 2)})
-            if chop_w > 59:
-                results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Info": round(chop_w, 2)})
 
     if not d_1d.empty:
         chop_series_d = MathWiz.calculate_choppiness(d_1d['High'], d_1d['Low'], d_1d['Close'])
@@ -300,41 +376,42 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             if chop_d > 59:
                 results.append({"Ticker": ticker, "Price": round(d_1d['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1D", "Info": round(chop_d, 2)})
                 
+    if not d_1w.empty:
+        chop_series_w2 = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
+        if not chop_series_w2.empty and not pd.isna(chop_series_w2.iloc[-1]):
+            chop_w2 = chop_series_w2.iloc[-1]
+            if chop_w2 > 59:
+                 results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Info": round(chop_w2, 2)})
+
     return results
 
 # ==========================================
-# 6. MAIN DASHBOARD UI
+# 7. MAIN DASHBOARD UI
 # ==========================================
 def main():
     if not check_password():
         st.stop()
         
-    st.title("Prath's Global Sniper 🎯")
-    
-    st.sidebar.header("Scan Settings")
-    
-    # NEW: Market Selection Dropdown
-    market_category = st.sidebar.selectbox(
-        "Select Asset Class", 
-        ["US Equity", "Indian Equity", "Commodities", "Crypto", "Currency"]
-    )
-    
-    tickers = load_tickers(market_category)
-    st.sidebar.write(f"Loaded **{len(tickers)}** tickers for {market_category}")
+    st.title("Prath's Market Scanner")
 
-    if st.sidebar.button("🔄 Run Analysis", type="primary"):
+    if 'init_done' not in st.session_state:
+        st.cache_data.clear()
+        st.session_state.init_done = True
+        
+    market = st.sidebar.selectbox("Market Sector", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 500)"])
+    tickers = load_tickers(market)
+    
+    if st.sidebar.button("🔄 Refresh Dashboard", type="primary"):
         st.cache_data.clear()
         st.rerun()
 
     if tickers:
-        with st.status(f"🚀 Scanning {market_category}...", expanded=True) as status:
-            
+        with st.status("🚀 Running Parallel Scans...", expanded=True) as status:
             st.write("Fetching Market Data...")
             data_d = fetch_bulk_data(tickers, interval="1d", period="2y")
             data_m = fetch_bulk_data(tickers, interval="1mo", period="max")
             
-            st.write("Processing Price Action Algorithms...")
-            
+            st.write("Processing Algorithms...")
             all_results = []
             is_multi = len(tickers) > 1
             
@@ -342,14 +419,8 @@ def main():
                 futures = []
                 for ticker in tickers:
                     try:
-                        # Handle yf structure differences for single vs multi ticker
-                        if is_multi:
-                            df_d = data_d[ticker] if ticker in data_d.columns.levels[0] else pd.DataFrame()
-                            df_m = data_m[ticker] if ticker in data_m.columns.levels[0] else pd.DataFrame()
-                        else:
-                            df_d = data_d
-                            df_m = data_m
-                        
+                        df_d = data_d[ticker] if is_multi else data_d
+                        df_m = data_m[ticker] if is_multi else data_m
                         if not df_d.empty and not df_m.empty:
                             futures.append(executor.submit(analyze_ticker, ticker, df_d, df_m))
                     except: continue
@@ -361,30 +432,36 @@ def main():
                     except: continue
             
             df_all = pd.DataFrame(all_results)
-            
             if df_all.empty:
-                st.warning("No setups found matching your strict criteria.")
+                st.warning("No setups found.")
                 status.update(label="Analysis Complete (No matches)", state="complete")
                 return
 
             def get_res(type_name, tf=None):
-                if tf:
-                    return df_all[(df_all['Type'] == type_name) & (df_all['TF'] == tf)]
+                if tf: return df_all[(df_all['Type'] == type_name) & (df_all['TF'] == tf)]
                 return df_all[df_all['Type'] == type_name]
 
-            # FVG
-            bf_1d = get_res("Bull_FVG", "1D"); bf_1w = get_res("Bull_FVG", "1W"); bf_1m = get_res("Bull_FVG", "1M")
-            brf_1d = get_res("Bear_FVG", "1D"); brf_1w = get_res("Bear_FVG", "1W"); brf_1m = get_res("Bear_FVG", "1M")
-
-            # iFVG
-            bif_1d = get_res("Bull_iFVG", "1D"); bif_1w = get_res("Bull_iFVG", "1W"); bif_1m = get_res("Bull_iFVG", "1M")
-            brif_1d = get_res("Bear_iFVG", "1D"); brif_1w = get_res("Bear_iFVG", "1W"); brif_1m = get_res("Bear_iFVG", "1M")
-
-            # OB
-            bob_1d = get_res("Bull_OB", "1D"); bob_1w = get_res("Bull_OB", "1W"); bob_1m = get_res("Bull_OB", "1M"); bob_6m = get_res("Bull_OB", "6M") 
-            brob_1d = get_res("Bear_OB", "1D"); brob_1w = get_res("Bear_OB", "1W"); brob_1m = get_res("Bear_OB", "1M"); brob_6m = get_res("Bear_OB", "6M") 
-
-            # Support / Reversal / Squeeze
+            # Get Result Subsets
+            bf_1d = get_res("Bull_FVG", "1D")
+            bf_1w = get_res("Bull_FVG", "1W")
+            bf_1m = get_res("Bull_FVG", "1M")
+            brf_1d = get_res("Bear_FVG", "1D")
+            brf_1w = get_res("Bear_FVG", "1W")
+            brf_1m = get_res("Bear_FVG", "1M")
+            bif_1d = get_res("Bull_iFVG", "1D")
+            bif_1w = get_res("Bull_iFVG", "1W")
+            bif_1m = get_res("Bull_iFVG", "1M")
+            brif_1d = get_res("Bear_iFVG", "1D")
+            brif_1w = get_res("Bear_iFVG", "1W")
+            brif_1m = get_res("Bear_iFVG", "1M")
+            bob_1d = get_res("Bull_OB", "1D")
+            bob_1w = get_res("Bull_OB", "1W")
+            bob_1m = get_res("Bull_OB", "1M")
+            bob_6m = get_res("Bull_OB", "6M") 
+            brob_1d = get_res("Bear_OB", "1D")
+            brob_1w = get_res("Bear_OB", "1W")
+            brob_1m = get_res("Bear_OB", "1M")
+            brob_6m = get_res("Bear_OB", "6M") 
             sup_res = get_res("Strong_Support")
             rev_res = get_res("Reversal")
             sq_1d = get_res("Squeeze", "1D")
@@ -395,61 +472,86 @@ def main():
         # --- DISPLAY GRID ---
         col_bull, col_bear = st.columns(2)
         
-        # === BULLISH COLUMN ===
         with col_bull:
             st.header("🐂 Bullish Scans")
-            
-            st.subheader("FVG Breakouts")
+            st.subheader("FVG Breakouts"); st.caption("Fresh break of structure on FVG candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
 
-            st.subheader("🔄 iFVG Reversals")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.subheader("🔄 iFVG Reversals"); st.caption("5-Candle V-Shape: Drop → Pop")
+            if bif_1d.empty and bif_1w.empty and bif_1m.empty: st.info("No iFVG setups found.")
+            else:
+                st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
-            st.divider()
             st.subheader("Order Block Breakouts")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bob_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bob_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bob_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**6M**"); st.dataframe(filter_top_5_by_cap(bob_6m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
-            st.divider()
-            st.subheader("🛡️ Strong FVG Support")
-            st.dataframe(filter_top_5_by_cap(sup_res), hide_index=True, use_container_width=True)
+            st.subheader("🛡️ Strong FVG Support"); st.dataframe(filter_top_5_by_cap(sup_res), hide_index=True, use_container_width=True)
 
-        # === BEARISH COLUMN ===
         with col_bear:
             st.header("🐻 Bearish Scans")
-            
-            st.subheader("FVG Breakdowns")
+            st.subheader("FVG Breakdowns"); st.caption("Fresh break of structure on FVG candle.")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
-            st.subheader("🔄 iFVG Reversals")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.subheader("🔄 iFVG Reversals"); st.caption("5-Candle Inverted V: Pop → Drop")
+            if brif_1d.empty and brif_1w.empty and brif_1m.empty: st.info("No iFVG setups found.")
+            else:
+                st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
 
-            st.divider()
             st.subheader("Order Block Breakdowns")
             st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brob_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brob_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brob_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**6M**"); st.dataframe(filter_top_5_by_cap(brob_6m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
             
-            st.divider()
-            st.subheader("🔄 Trend Reversals (Exhaustion)")
-            st.write("**1W (Chop < 25)**")
+            st.subheader("🔄 Trend Reversals (Exhaustion)"); st.write("**1W (Chop < 25)**")
             st.dataframe(filter_top_5_by_cap(rev_res), hide_index=True, use_container_width=True)
 
-        # === FULL WIDTH: WATCHLIST ===
         st.divider()
         st.header("⚡ Volatility Squeeze Watchlist")
         c1, c2 = st.columns(2)
-        with c1:
-            st.write("**Daily Squeeze (Chop > 59)**")
-            st.dataframe(filter_top_5_by_cap(sq_1d), hide_index=True, use_container_width=True)
-        with c2:
-            st.write("**Weekly Squeeze (Chop > 59)**")
-            st.dataframe(filter_top_5_by_cap(sq_1w), hide_index=True, use_container_width=True)
+        with c1: st.write("**Daily Squeeze**"); st.dataframe(filter_top_5_by_cap(sq_1d), hide_index=True, use_container_width=True)
+        with c2: st.write("**Weekly Squeeze**"); st.dataframe(filter_top_5_by_cap(sq_1w), hide_index=True, use_container_width=True)
+
+        # === AI STRATEGIC BRIEFING SECTION ===
+        st.divider()
+        st.header("🤖 AI Strategic Analyst")
+        
+        found_tickers = df_all['Ticker'].unique().tolist()
+        
+        if found_tickers:
+            c_sel, c_btn = st.columns([3, 1])
+            with c_sel:
+                selected_ticker = st.selectbox("Select a Ticker to Analyze:", found_tickers)
+            with c_btn:
+                st.write("") # Spacer
+                run_ai = st.button("Generate Briefing ✨", type="primary")
+            
+            if run_ai and selected_ticker:
+                ticker_data = df_all[df_all['Ticker'] == selected_ticker].iloc[0]
+                signal_type = ticker_data['Type']
+                price = ticker_data['Price']
+                tf = ticker_data.get('TF', 'N/A')
+                
+                with st.spinner(f"🔍 Analyzing {selected_ticker} market context..."):
+                    briefing = AI_Analyst.generate_briefing(selected_ticker, signal_type, price, tf)
+                
+                st.success(f"**Strategic Briefing: {selected_ticker}**")
+                st.markdown(briefing)
+                with st.expander("View Source Headlines"):
+                    st.write(AI_Analyst.get_market_news(selected_ticker))
+        else:
+            st.info("No tickers available to analyze.")
 
 if __name__ == "__main__":
     main()
