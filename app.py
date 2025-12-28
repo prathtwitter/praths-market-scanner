@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v5.8", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v5.9", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -49,12 +49,8 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* Clean up headers in columns */
-    h4 {
-        padding-top: 10px;
-        margin-bottom: 0px;
-        color: #e5e7eb;
-    }
+    /* Headers */
+    h4 { padding-top: 10px; margin-bottom: 0px; color: #e5e7eb; }
     
     /* Definitions */
     div[data-testid="stCaptionContainer"] {
@@ -64,11 +60,8 @@ st.markdown("""
         line-height: 1.4;
     }
     
-    /* Image Container - REMOVED FIXED HEIGHT to keep original sizing */
-    .stImage img {
-        border-radius: 5px;
-        border: 1px solid #333;
-    }
+    /* Image Container */
+    .stImage img { border-radius: 5px; border: 1px solid #333; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,10 +71,8 @@ st.markdown("""
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
-    
     if st.session_state.password_correct:
         return True
-
     def password_entered():
         correct_password = st.secrets.get("PASSWORD", "Sniper2025")
         if st.session_state["password"] == correct_password:
@@ -89,10 +80,8 @@ def check_password():
             del st.session_state["password"]
         else:
             st.session_state.password_correct = False
-
     st.text_input("Enter Access Key", type="password", on_change=password_entered, key="password")
-    
-    if "password_correct" in st.session_state and not st.session_state.password_correct:
+    if not st.session_state.password_correct:
         st.error("⛔ Access Denied")
         return False
     return True
@@ -138,11 +127,17 @@ class AI_Analyst:
         
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
+        # Add explanation for Ranking in the prompt
+        extra_context = ""
+        if "Fair Value Area" in scan_name:
+            extra_context = "Note on 'Info' column: 'BEST' means the FVA contains an overlapping Fair Value Gap. 'Weak' means no FVG."
+
         data_str = df[['Ticker', 'Price', 'Chop', 'TF', 'Info']].to_string(index=False)
         
         prompt = f"""
         You are an elite Sniper Trader.
         I just ran a scan for **{scan_name}**.
+        {extra_context}
         Here are the results:
         
         {data_str}
@@ -152,6 +147,7 @@ class AI_Analyst:
         2.  **Filter:** Reject stocks with earnings in < 3 days.
         3.  **Logic:** - Breakouts (FVG/OB): Prefer Chop < 40.
             - Reversals/Squeezes: Prefer Chop > 60.
+            - **Fair Value Areas:** Prioritize 'BEST' (Overlapping FVG) over 'Weak'.
         4.  **Select ONE Top Pick.**
         
         **Output Format (Strict):**
@@ -230,6 +226,77 @@ class MathWiz:
                 if lower <= current_price <= upper: return True 
         return False
 
+    @staticmethod
+    def check_fair_value_area(df, direction):
+        # 1-2-3 Move Logic
+        # Need at least a few candles to detect swing and break
+        if len(df) < 10: return None
+        
+        # Get Swings
+        df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df, neighbor_count=2)
+        
+        # Current Price
+        curr_close = df['Close'].iloc[-1]
+        
+        # BULLISH FVA: Impulse(Up) -> Retrace(Down) -> Break(Up)
+        if direction == "Bullish":
+            # 1. Find recent Swing Highs (Start of Swing 2)
+            recent_highs = df[df['Is_H']].iloc[-3:] # Look at last 3 peaks
+            if recent_highs.empty: return None
+            
+            # Check if we BROKE a recent high
+            # The break must have happened recently (e.g. last 3 bars)
+            last_high_val = recent_highs['High'].iloc[-1]
+            last_high_idx = recent_highs.index[-1]
+            
+            # Check if break happened AFTER the high
+            recent_price_action = df.loc[last_high_idx:]
+            if len(recent_price_action) < 2: return None 
+            
+            # Has price closed above this high recently?
+            if (recent_price_action['Close'].iloc[-3:] > last_high_val).any():
+                # 2. Find the Swing Low between the High and the Break (Swing 2 End)
+                # The FVA is the range of Swing 2 (From High to Low)
+                swing_2_segment = recent_price_action.iloc[:-1] # Exclude current candle maybe
+                fva_low = swing_2_segment['Low'].min()
+                fva_high = last_high_val 
+                
+                # 3. Check for Overlapping FVG in this range
+                # Simple check: Does any candle in Swing 2 have an FVG?
+                has_fvg = False
+                # Re-calculate FVG for just this segment
+                seg_bull, _ = MathWiz.find_fvg(swing_2_segment)
+                if seg_bull.any(): has_fvg = True
+                
+                return "BEST (w/ FVG)" if has_fvg else "Weak (No FVG)"
+
+        # BEARISH FVA: Impulse(Down) -> Retrace(Up) -> Break(Down)
+        if direction == "Bearish":
+            # 1. Find recent Swing Lows
+            recent_lows = df[df['Is_L']].iloc[-3:]
+            if recent_lows.empty: return None
+            
+            last_low_val = recent_lows['Low'].iloc[-1]
+            last_low_idx = recent_lows.index[-1]
+            
+            recent_price_action = df.loc[last_low_idx:]
+            if len(recent_price_action) < 2: return None
+            
+            # Has price closed below this low recently?
+            if (recent_price_action['Close'].iloc[-3:] < last_low_val).any():
+                # FVA is range of Swing 2 (From Low to High of retracement)
+                swing_2_segment = recent_price_action.iloc[:-1]
+                fva_low = last_low_val
+                fva_high = swing_2_segment['High'].max()
+                
+                has_fvg = False
+                _, seg_bear = MathWiz.find_fvg(swing_2_segment)
+                if seg_bear.any(): has_fvg = True
+                
+                return "BEST (w/ FVG)" if has_fvg else "Weak (No FVG)"
+                
+        return None
+
 # ==========================================
 # 5. DATA ENGINE
 # ==========================================
@@ -302,6 +369,7 @@ def scan_logic(ticker, df_d, df_m, scan_type):
             chop = round(chop_s.iloc[-1], 2) if not chop_s.empty else 0
         curr = df.iloc[-1]; price = round(curr['Close'], 2)
 
+        # --- STANDARD SCANS ---
         if "FVG" in scan_type:
             df['Bull'], df['Bear'] = MathWiz.find_fvg(df)
             df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
@@ -336,6 +404,14 @@ def scan_logic(ticker, df_d, df_m, scan_type):
             if "Bearish" in scan_type and res == "Bear":
                 results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
 
+        # --- FAIR VALUE AREA SCAN ---
+        if "Fair Value Area" in scan_type:
+            direction = "Bullish" if "Bullish" in scan_type else "Bearish"
+            fva_status = MathWiz.check_fair_value_area(df, direction)
+            if fva_status:
+                results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": fva_status})
+
+    # --- SPECIAL SCANS ---
     if "Support" in scan_type:
         sup_tf = []
         for t in ["3M", "6M", "12M"]:
@@ -379,7 +455,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v5.8")
+    st.title("Prath's Sniper v5.9")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -435,10 +511,16 @@ def main():
         if st.button("Run: Bearish iFVG"): scan_request = "Bearish iFVG"
         st.image(f"{repo_base}Bearish%20iFVG.jpg", use_container_width=True)
 
-    # --- VOLATILITY COLUMN ---
+    # --- VOLATILITY & FVA COLUMN ---
     with c3:
-        st.header("⚡ Volatility")
+        st.header("⚡ Volatility & FVA")
         
+        st.markdown("#### Fair Value Areas (FVA)")
+        st.caption("A completed 3-Swing sequence (Impulse-Retrace-Break). 'BEST' status requires an overlapping FVG in the retracement.")
+        if st.button("Run: Bullish FVA"): scan_request = "Bullish Fair Value Area"
+        if st.button("Run: Bearish FVA"): scan_request = "Bearish Fair Value Area"
+        st.image("https://placehold.co/400x250/162b26/00CC96?text=FVA+Scanner%0A(1-2-3+Move+%2B+FVG)", use_container_width=True)
+
         st.markdown("#### Strong Support Zones")
         st.caption("Price reacting off a high-timeframe (3M/6M) unmitigated Fair Value Gap, signaling major institutional interest.")
         if st.button("Run: Strong Support"): scan_request = "Strong Support"
@@ -487,13 +569,12 @@ def main():
         df_final = pd.DataFrame(all_res)
         
         if df_final.empty:
-            st.warning("No high-probability setups found right now. (Strict Filters Applied)")
+            st.warning("No setups found matching this exact logic right now.")
         else:
             with st.spinner("Fetching Earnings Dates..."):
                 u_tickers = df_final['Ticker'].unique().tolist()
                 e_map = AI_Analyst.get_earnings_date_bulk(u_tickers)
-                df_final['Info'] = df_final['Ticker'].map(e_map)
-                df_final['Info'] = df_final['Info'].fillna("-")
+                df_final['Info'] = df_final['Ticker'].map(e_map).fillna(df_final.get('Info', "-"))
             
             with st.spinner(f"🧠 AI is selecting Top Pick from {len(df_final)} candidates..."):
                 top_pick_text = AI_Analyst.generate_top_pick(df_final, scan_request)
