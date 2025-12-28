@@ -1,0 +1,45 @@
+Ticker,Name,Category
+XLC,Communication Services (S&P 500),US Sectors
+XLY,Consumer Discretionary (S&P 500),US Sectors
+XLP,Consumer Staples (S&P 500),US Sectors
+XLE,Energy (S&P 500),US Sectors
+XLF,Financials (S&P 500),US Sectors
+XLV,Health Care (S&P 500),US Sectors
+XLI,Industrials (S&P 500),US Sectors
+XLK,Information Technology (S&P 500),US Sectors
+XLB,Materials (S&P 500),US Sectors
+XLRE,Real Estate (S&P 500),US Sectors
+XLU,Utilities (S&P 500),US Sectors
+^CNXAUTO,Nifty Auto,India Sectors
+^NSEBANK,Nifty Bank,India Sectors
+^CNXPHARMA,Nifty Pharma (proxy for Chemicals),India Sectors
+^CNXFIN,Nifty Financial Services 25/50,India Sectors
+^CNXFMCG,Nifty FMCG,India Sectors
+^CNXPHARMA,Nifty Healthcare/Pharma,India Sectors
+^CNXIT,Nifty IT,India Sectors
+^CNXMEDIA,Nifty Media,India Sectors
+^CNXMETAL,Nifty Metal,India Sectors
+^CNXPSUBANK,Nifty PSU Bank,India Sectors
+^CNXREALTY,Nifty Realty,India Sectors
+^CNXENERGY,Nifty Oil and Gas/Energy,India Sectors
+^N225,Nikkei 225 (Japan),Global Indices
+^DJI,Dow Jones Industrial Average,Global Indices
+^NSEI,Nifty 50,Global Indices
+^NSEMDCP50,Nifty Midcap 50,India Market Cap
+^NSESMLCP100,Nifty Smallcap 100,India Market Cap
+GC=F,Gold Futures,Commodities
+SI=F,Silver Futures,Commodities
+PL=F,Platinum Futures,Commodities
+HG=F,Copper Futures,Commodities
+NG=F,Natural Gas Futures,Commodities
+CL=F,Crude Oil WTI Futures,Commodities
+USDINR=X,USD/INR,Currencies
+CADINR=X,CAD/INR,Currencies
+USDCAD=X,USD/CAD,Currencies
+EURUSD=X,EUR/USD,Currencies
+DX-Y.NYB,US Dollar Index (DXY),Currencies
+BTC-USD,Bitcoin,Crypto
+ETH-USD,Ethereum,Crypto
+XRP-USD,XRP,Crypto
+^TNX,US 10-Year Treasury Yield,Bonds
+^TYX,US 30-Year Treasury Yield,Bonds
