@@ -16,6 +16,15 @@ st.markdown("""
     .stRadio > div { flex-direction: row; } 
     .stDataFrame { border: 1px solid #333; }
     h3 { border-bottom: 2px solid #333; padding-bottom: 10px; }
+    
+    /* Style for the consolidated table */
+    .consolidated-table th {
+        text-align: center !important;
+        background-color: #1e2130 !important;
+    }
+    .consolidated-table td {
+        text-align: center !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -235,33 +244,6 @@ def fetch_bulk_data(tickers, interval="1d", period="2y"):
     data = yf.download(tickers, period=period, interval=interval, group_by='ticker', progress=True, threads=True)
     return data
 
-def filter_top_5_by_cap(df_results, is_macro=False):
-    """Filter top 5 by market cap. For macro scanner, skip market cap filtering."""
-    if df_results.empty: return df_results
-    
-    # For macro scanner, just return top 5 without market cap filtering
-    if is_macro:
-        return df_results.head(5)
-    
-    tickers = df_results['Ticker'].unique().tolist()
-    caps = []
-    
-    for t in tickers:
-        try:
-            val = yf.Ticker(t).fast_info['market_cap']
-            caps.append(val)
-        except:
-            try:
-                val = yf.Ticker(t).info.get('marketCap', 0)
-                caps.append(val)
-            except:
-                caps.append(0)
-    
-    cap_df = pd.DataFrame({'Ticker': tickers, 'MarketCap': caps})
-    merged = df_results.merge(cap_df, on='Ticker', how='left')
-    merged = merged.sort_values(by='MarketCap', ascending=False, na_position='last').head(5)
-    return merged.drop(columns=['MarketCap'])
-
 def resample_custom(df, timeframe):
     if df.empty: return df
     agg_dict = {'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last', 'Volume': 'sum'}
@@ -294,8 +276,26 @@ def resample_custom(df, timeframe):
 def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     """
     Runs ALL scans for ONE ticker in a single pass.
+    Returns a dictionary with ticker info and all scan results.
     """
-    results = []
+    results = {
+        'Ticker': ticker,
+        'Price': 0,
+        # FVG Breakouts
+        'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
+        # iFVG Reversals
+        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
+        # Order Blocks
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
+        # Strong Support
+        'Support': False,
+        # Reversal Candidates
+        'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
+        # Squeeze
+        'Squeeze_1D': False, 'Squeeze_1W': False,
+        # Track if any bullish signal found
+        'has_signal': False
+    }
     
     try:
         # 1D, 1W from Daily Data
@@ -313,7 +313,12 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             "3M": d_3m, "6M": d_6m, "12M": d_12m
         }
         
-    except: return []
+        # Set price from daily data
+        if not d_1d.empty:
+            results['Price'] = round(d_1d['Close'].iloc[-1], 2)
+        
+    except: 
+        return results
 
     # 1. FVG & ORDER BLOCKS & iFVG (Iterate Timeframes)
     for tf in ["1D", "1W", "1M", "6M"]:
@@ -327,22 +332,15 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         
         curr = df.iloc[-1]
         prev = df.iloc[-2]
-        price = round(curr['Close'], 2)
 
         # --- A. SNIPER FVG ENTRIES ---
-        if curr['Bull_FVG']:
+        if curr['Bull_FVG'] and tf in ["1D", "1W", "1M"]:
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
                 last_swing_high = past_swings['High'].iloc[-1]
                 if curr['Close'] > last_swing_high and prev['Close'] <= last_swing_high:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf})
-        
-        if curr['Bear_FVG']:
-            past_swings = df[df['Is_Swing_Low']]
-            if not past_swings.empty:
-                last_swing_low = past_swings['Low'].iloc[-1]
-                if curr['Close'] < last_swing_low and prev['Close'] >= last_swing_low:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_FVG", "TF": tf})
+                    results[f'FVG_{tf}'] = True
+                    results['has_signal'] = True
 
         # --- B. ORDER BLOCKS ---
         subset = df.iloc[-4:].copy()
@@ -353,21 +351,15 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             if (c_anc['Close'] < c_anc['Open'] and 
                 c1['Close'] > c1['Open'] and c2['Close'] > c2['Open'] and c3['Close'] > c3['Open']):
                 if c3['Low'] > c1['High'] and c3['Close'] > c_anc['High']:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bull_OB", "TF": tf})
-
-            # Bearish OB
-            if (c_anc['Close'] > c_anc['Open'] and 
-                c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
-                if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
-                    results.append({"Ticker": ticker, "Price": price, "Type": "Bear_OB", "TF": tf})
+                    results[f'OB_{tf}'] = True
+                    results['has_signal'] = True
         
         # --- C. iFVG REVERSALS (1D, 1W, 1M only) ---
         if tf in ["1D", "1W", "1M"]:
             ifvg_status = MathWiz.check_ifvg_reversal(df)
             if ifvg_status == "Bull":
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bull_iFVG", "TF": tf})
-            elif ifvg_status == "Bear":
-                results.append({"Ticker": ticker, "Price": price, "Type": "Bear_iFVG", "TF": tf})
+                results[f'iFVG_{tf}'] = True
+                results['has_signal'] = True
 
     # 2. STRONG SUPPORT
     sup_tf = []
@@ -376,98 +368,275 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     if MathWiz.find_unmitigated_fvg_zone(d_12m): sup_tf.append("12M")
     
     if len(sup_tf) >= 2:
-         results.append({
-             "Ticker": ticker, 
-             "Price": round(d_3m['Close'].iloc[-1], 2) if not d_3m.empty else 0, 
-             "Type": "Strong_Support", 
-             "Info": ", ".join(sup_tf)
-         })
+        results['Support'] = True
+        results['has_signal'] = True
 
-    # 3. REVERSALS (Choppiness-based)
-    if not d_1w.empty:
-        chop_series = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
-        if not chop_series.empty and not pd.isna(chop_series.iloc[-1]):
-            chop_w = chop_series.iloc[-1]
-            if chop_w < 25:
-                results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Reversal", "Info": round(chop_w, 2)})
-
-    # 4. SQUEEZE
+    # 3. SQUEEZE
     if not d_1d.empty:
         chop_series_d = MathWiz.calculate_choppiness(d_1d['High'], d_1d['Low'], d_1d['Close'])
         if not chop_series_d.empty and not pd.isna(chop_series_d.iloc[-1]):
             chop_d = chop_series_d.iloc[-1]
             if chop_d > 59:
-                results.append({"Ticker": ticker, "Price": round(d_1d['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1D", "Info": round(chop_d, 2)})
+                results['Squeeze_1D'] = True
+                results['has_signal'] = True
                 
     if not d_1w.empty:
-        chop_series_w2 = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
-        if not chop_series_w2.empty and not pd.isna(chop_series_w2.iloc[-1]):
-            chop_w2 = chop_series_w2.iloc[-1]
-            if chop_w2 > 59:
-                 results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Info": round(chop_w2, 2)})
+        chop_series_w = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
+        if not chop_series_w.empty and not pd.isna(chop_series_w.iloc[-1]):
+            chop_w = chop_series_w.iloc[-1]
+            if chop_w > 59:
+                results['Squeeze_1W'] = True
+                results['has_signal'] = True
 
-    # 5. REVERSAL CANDIDATES (Consecutive Candle Scan)
-    # 1D: 5+ consecutive candles
+    # 4. REVERSAL CANDIDATES (Consecutive Candle Scan)
+    # 1D: 5+ consecutive red candles
     if not d_1d.empty and len(d_1d) >= 5:
         rev_1d = MathWiz.check_consecutive_candles(d_1d, 5)
         if rev_1d == 'Bull':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1d['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bull", 
-                "TF": "1D",
-                "Info": "5+ Red Candles"
-            })
-        elif rev_1d == 'Bear':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1d['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bear", 
-                "TF": "1D",
-                "Info": "5+ Green Candles"
-            })
+            results['RevCand_1D'] = True
+            results['has_signal'] = True
     
-    # 1W: 4+ consecutive candles
+    # 1W: 4+ consecutive red candles
     if not d_1w.empty and len(d_1w) >= 4:
         rev_1w = MathWiz.check_consecutive_candles(d_1w, 4)
         if rev_1w == 'Bull':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1w['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bull", 
-                "TF": "1W",
-                "Info": "4+ Red Candles"
-            })
-        elif rev_1w == 'Bear':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1w['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bear", 
-                "TF": "1W",
-                "Info": "4+ Green Candles"
-            })
+            results['RevCand_1W'] = True
+            results['has_signal'] = True
     
-    # 1M: 3+ consecutive candles
+    # 1M: 3+ consecutive red candles
     if not d_1m.empty and len(d_1m) >= 3:
         rev_1m = MathWiz.check_consecutive_candles(d_1m, 3)
         if rev_1m == 'Bull':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1m['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bull", 
-                "TF": "1M",
-                "Info": "3+ Red Candles"
-            })
-        elif rev_1m == 'Bear':
-            results.append({
-                "Ticker": ticker, 
-                "Price": round(d_1m['Close'].iloc[-1], 2), 
-                "Type": "Rev_Candidate_Bear", 
-                "TF": "1M",
-                "Info": "3+ Green Candles"
-            })
+            results['RevCand_1M'] = True
+            results['has_signal'] = True
 
     return results
+
+
+def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
+    """
+    Runs ALL BEARISH scans for ONE ticker in a single pass.
+    Returns a dictionary with ticker info and all scan results.
+    """
+    results = {
+        'Ticker': ticker,
+        'Price': 0,
+        # FVG Breakdowns
+        'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
+        # iFVG Reversals
+        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
+        # Order Blocks
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
+        # Trend Reversal (Exhaustion)
+        'Exhaustion': False,
+        # Reversal Candidates (Overbought)
+        'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
+        # Track if any bearish signal found
+        'has_signal': False
+    }
+    
+    try:
+        # 1D, 1W from Daily Data
+        d_1d = resample_custom(df_daily_raw, "1D")
+        d_1w = resample_custom(df_daily_raw, "1W")
+        
+        # 1M, 3M, 6M, 12M from Monthly Data
+        d_1m = resample_custom(df_monthly_raw, "1M")
+        d_3m = resample_custom(df_monthly_raw, "3M")
+        d_6m = resample_custom(df_monthly_raw, "6M")
+        d_12m = resample_custom(df_monthly_raw, "12M")
+        
+        data_map = {
+            "1D": d_1d, "1W": d_1w, "1M": d_1m, 
+            "3M": d_3m, "6M": d_6m, "12M": d_12m
+        }
+        
+        # Set price from daily data
+        if not d_1d.empty:
+            results['Price'] = round(d_1d['Close'].iloc[-1], 2)
+        
+    except: 
+        return results
+
+    # 1. FVG & ORDER BLOCKS & iFVG (Iterate Timeframes)
+    for tf in ["1D", "1W", "1M", "6M"]:
+        if tf not in data_map or len(data_map[tf]) < 5: continue
+        
+        df = data_map[tf].copy() 
+        
+        # Run Standard FVG/Swing Logic
+        df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
+        df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
+        
+        curr = df.iloc[-1]
+        prev = df.iloc[-2]
+
+        # --- A. SNIPER FVG BREAKDOWNS ---
+        if curr['Bear_FVG'] and tf in ["1D", "1W", "1M"]:
+            past_swings = df[df['Is_Swing_Low']]
+            if not past_swings.empty:
+                last_swing_low = past_swings['Low'].iloc[-1]
+                if curr['Close'] < last_swing_low and prev['Close'] >= last_swing_low:
+                    results[f'FVG_{tf}'] = True
+                    results['has_signal'] = True
+
+        # --- B. ORDER BLOCKS (Bearish) ---
+        subset = df.iloc[-4:].copy()
+        if len(subset) == 4:
+            c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
+            
+            # Bearish OB
+            if (c_anc['Close'] > c_anc['Open'] and 
+                c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
+                if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
+                    results[f'OB_{tf}'] = True
+                    results['has_signal'] = True
+        
+        # --- C. iFVG REVERSALS (1D, 1W, 1M only) ---
+        if tf in ["1D", "1W", "1M"]:
+            ifvg_status = MathWiz.check_ifvg_reversal(df)
+            if ifvg_status == "Bear":
+                results[f'iFVG_{tf}'] = True
+                results['has_signal'] = True
+
+    # 2. TREND REVERSAL (Exhaustion) - Weekly Chop < 25
+    if not d_1w.empty:
+        chop_series = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
+        if not chop_series.empty and not pd.isna(chop_series.iloc[-1]):
+            chop_w = chop_series.iloc[-1]
+            if chop_w < 25:
+                results['Exhaustion'] = True
+                results['has_signal'] = True
+
+    # 3. REVERSAL CANDIDATES (Consecutive Green Candles - Overbought)
+    # 1D: 5+ consecutive green candles
+    if not d_1d.empty and len(d_1d) >= 5:
+        rev_1d = MathWiz.check_consecutive_candles(d_1d, 5)
+        if rev_1d == 'Bear':
+            results['RevCand_1D'] = True
+            results['has_signal'] = True
+    
+    # 1W: 4+ consecutive green candles
+    if not d_1w.empty and len(d_1w) >= 4:
+        rev_1w = MathWiz.check_consecutive_candles(d_1w, 4)
+        if rev_1w == 'Bear':
+            results['RevCand_1W'] = True
+            results['has_signal'] = True
+    
+    # 1M: 3+ consecutive green candles
+    if not d_1m.empty and len(d_1m) >= 3:
+        rev_1m = MathWiz.check_consecutive_candles(d_1m, 3)
+        if rev_1m == 'Bear':
+            results['RevCand_1M'] = True
+            results['has_signal'] = True
+
+    return results
+
+
+def create_consolidated_table(results_list, is_macro=False, macro_names=None, scan_type='bullish'):
+    """
+    Creates a consolidated DataFrame with multi-level columns for display.
+    """
+    if not results_list:
+        return None
+    
+    # Filter only stocks with signals
+    filtered = [r for r in results_list if r.get('has_signal', False)]
+    
+    if not filtered:
+        return None
+    
+    # Create base dataframe
+    df = pd.DataFrame(filtered)
+    
+    # Add Name column for macro
+    if is_macro and macro_names:
+        df['Name'] = df['Ticker'].map(macro_names).fillna(df['Ticker'])
+    
+    # Convert boolean to checkmark
+    check = "✅"
+    empty = ""
+    
+    if scan_type == 'bullish':
+        # Build the display dataframe
+        display_data = []
+        for _, row in df.iterrows():
+            display_row = {
+                ('Stock', 'Ticker'): row['Ticker'],
+                ('Stock', 'Price'): row['Price'],
+                ('FVG Breakouts', '1D'): check if row.get('FVG_1D') else empty,
+                ('FVG Breakouts', '1W'): check if row.get('FVG_1W') else empty,
+                ('FVG Breakouts', '1M'): check if row.get('FVG_1M') else empty,
+                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
+                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
+                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                ('Order Blocks', '1D'): check if row.get('OB_1D') else empty,
+                ('Order Blocks', '1W'): check if row.get('OB_1W') else empty,
+                ('Order Blocks', '1M'): check if row.get('OB_1M') else empty,
+                ('Order Blocks', '6M'): check if row.get('OB_6M') else empty,
+                ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
+                ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
+                ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
+                ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
+                ('Squeeze', '1D'): check if row.get('Squeeze_1D') else empty,
+                ('Squeeze', '1W'): check if row.get('Squeeze_1W') else empty,
+            }
+            if is_macro and macro_names:
+                display_row[('Stock', 'Name')] = row.get('Name', row['Ticker'])
+            display_data.append(display_row)
+    else:  # bearish
+        display_data = []
+        for _, row in df.iterrows():
+            display_row = {
+                ('Stock', 'Ticker'): row['Ticker'],
+                ('Stock', 'Price'): row['Price'],
+                ('FVG Breakdowns', '1D'): check if row.get('FVG_1D') else empty,
+                ('FVG Breakdowns', '1W'): check if row.get('FVG_1W') else empty,
+                ('FVG Breakdowns', '1M'): check if row.get('FVG_1M') else empty,
+                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
+                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
+                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                ('Order Blocks', '1D'): check if row.get('OB_1D') else empty,
+                ('Order Blocks', '1W'): check if row.get('OB_1W') else empty,
+                ('Order Blocks', '1M'): check if row.get('OB_1M') else empty,
+                ('Order Blocks', '6M'): check if row.get('OB_6M') else empty,
+                ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
+                ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
+                ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
+                ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
+            }
+            if is_macro and macro_names:
+                display_row[('Stock', 'Name')] = row.get('Name', row['Ticker'])
+            display_data.append(display_row)
+    
+    display_df = pd.DataFrame(display_data)
+    display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
+    
+    # Reorder columns to put Name after Ticker if macro
+    if is_macro and macro_names:
+        if scan_type == 'bullish':
+            col_order = [
+                ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
+                ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
+                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
+                ('Order Blocks', '1D'), ('Order Blocks', '1W'), ('Order Blocks', '1M'), ('Order Blocks', '6M'),
+                ('Strong Support', '3M/6M/12M'),
+                ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
+                ('Squeeze', '1D'), ('Squeeze', '1W'),
+            ]
+        else:
+            col_order = [
+                ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
+                ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
+                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
+                ('Order Blocks', '1D'), ('Order Blocks', '1W'), ('Order Blocks', '1M'), ('Order Blocks', '6M'),
+                ('Trend Exhaustion', '1W'),
+                ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
+            ]
+        display_df = display_df[col_order]
+    
+    return display_df
+
 
 # ==========================================
 # 6. MAIN DASHBOARD UI
@@ -534,9 +703,8 @@ def main():
             ### Ready to Scan: {market_name}
             
             **Available Scans:**
-            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support, Reversal Candidates
-            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals, Reversal Candidates
-            - ⚡ **Watchlist:** Volatility Squeeze (Daily & Weekly)
+            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support, Reversal Candidates, Squeeze
+            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Exhaustion, Reversal Candidates
             
             **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
             """)
@@ -555,198 +723,86 @@ def main():
             
             st.write("Processing Algorithms...")
             
-            all_results = []
+            bullish_results = []
+            bearish_results = []
             is_multi = len(tickers) > 1
             
             with ThreadPoolExecutor() as executor:
-                futures = []
+                bull_futures = []
+                bear_futures = []
+                
                 for ticker in tickers:
                     try:
                         df_d = data_d[ticker] if is_multi else data_d
                         df_m = data_m[ticker] if is_multi else data_m
                         
                         if not df_d.empty and not df_m.empty:
-                            futures.append(executor.submit(analyze_ticker, ticker, df_d, df_m))
+                            bull_futures.append(executor.submit(analyze_ticker, ticker, df_d, df_m))
+                            bear_futures.append(executor.submit(analyze_ticker_bearish, ticker, df_d, df_m))
                     except: continue
                 
-                for f in futures:
+                for f in bull_futures:
                     try:
                         res = f.result()
-                        if res: all_results.extend(res)
+                        if res: bullish_results.append(res)
+                    except: continue
+                
+                for f in bear_futures:
+                    try:
+                        res = f.result()
+                        if res: bearish_results.append(res)
                     except: continue
             
-            df_all = pd.DataFrame(all_results)
-            
-            if df_all.empty:
-                st.warning("No setups found.")
-                status.update(label="Analysis Complete (No matches)", state="complete")
-                return
-
-            # Add Name column for macro scanner
-            if is_macro and 'Ticker' in df_all.columns:
-                df_all['Name'] = df_all['Ticker'].map(macro_names).fillna(df_all['Ticker'])
-
-            def get_res(type_name, tf=None):
-                if tf:
-                    return df_all[(df_all['Type'] == type_name) & (df_all['TF'] == tf)]
-                return df_all[df_all['Type'] == type_name]
-
-            # FVG
-            bf_1d = get_res("Bull_FVG", "1D")
-            bf_1w = get_res("Bull_FVG", "1W")
-            bf_1m = get_res("Bull_FVG", "1M")
-            
-            brf_1d = get_res("Bear_FVG", "1D")
-            brf_1w = get_res("Bear_FVG", "1W")
-            brf_1m = get_res("Bear_FVG", "1M")
-
-            # iFVG (New)
-            bif_1d = get_res("Bull_iFVG", "1D")
-            bif_1w = get_res("Bull_iFVG", "1W")
-            bif_1m = get_res("Bull_iFVG", "1M")
-
-            brif_1d = get_res("Bear_iFVG", "1D")
-            brif_1w = get_res("Bear_iFVG", "1W")
-            brif_1m = get_res("Bear_iFVG", "1M")
-
-            # OB
-            bob_1d = get_res("Bull_OB", "1D")
-            bob_1w = get_res("Bull_OB", "1W")
-            bob_1m = get_res("Bull_OB", "1M")
-            bob_6m = get_res("Bull_OB", "6M") 
-
-            brob_1d = get_res("Bear_OB", "1D")
-            brob_1w = get_res("Bear_OB", "1W")
-            brob_1m = get_res("Bear_OB", "1M")
-            brob_6m = get_res("Bear_OB", "6M") 
-
-            # Support / Reversal / Squeeze
-            sup_res = get_res("Strong_Support")
-            rev_res = get_res("Reversal")
-            sq_1d = get_res("Squeeze", "1D")
-            sq_1w = get_res("Squeeze", "1W")
-
-            # Reversal Candidates (NEW)
-            rc_bull_1d = get_res("Rev_Candidate_Bull", "1D")
-            rc_bull_1w = get_res("Rev_Candidate_Bull", "1W")
-            rc_bull_1m = get_res("Rev_Candidate_Bull", "1M")
-            
-            rc_bear_1d = get_res("Rev_Candidate_Bear", "1D")
-            rc_bear_1w = get_res("Rev_Candidate_Bear", "1W")
-            rc_bear_1m = get_res("Rev_Candidate_Bear", "1M")
-
             status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
-        # Define display columns based on scanner type
-        display_cols = ['Ticker', 'Name', 'Price'] if is_macro else ['Ticker', 'Price']
-        display_cols_info = ['Ticker', 'Name', 'Price', 'Info'] if is_macro else ['Ticker', 'Price', 'Info']
+        # Create consolidated tables
+        bull_table = create_consolidated_table(bullish_results, is_macro, macro_names, 'bullish')
+        bear_table = create_consolidated_table(bearish_results, is_macro, macro_names, 'bearish')
         
-        def safe_display(df, cols):
-            """Safely display dataframe with available columns"""
-            available_cols = [c for c in cols if c in df.columns]
-            if not available_cols:
-                return df
-            return df[available_cols]
-
-        # --- DISPLAY GRID ---
-        col_bull, col_bear = st.columns(2)
+        # --- DISPLAY ---
+        st.header("🐂 Bullish Scans")
+        st.caption("Stocks showing bullish setups across multiple timeframes")
         
-        # === BULLISH COLUMN ===
-        with col_bull:
-            st.header("🐂 Bullish Scans")
-            
-            st.subheader("FVG Breakouts")
-            st.caption("Fresh break of structure on the FVG formation candle.")
-            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-
-            st.subheader("🔄 iFVG Reversals")
-            st.caption("5-Candle V-Shape: Bear FVG (Drop) → Bull FVG (Pop)")
-            
-            if bif_1d.empty and bif_1w.empty and bif_1m.empty:
-                 st.info("No iFVG setups found.")
-            else:
-                 st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-                 st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-                 st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            
-            st.divider()
-            st.subheader("Order Block Breakouts")
-            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**6M**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_6m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            
-            st.divider()
-            st.subheader("🛡️ Strong FVG Support (3M/6M/12M)")
-            st.dataframe(safe_display(filter_top_5_by_cap(sup_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-
-            st.divider()
-            st.subheader("🔻 Reversal Candidates For Buy")
-            st.caption("Consecutive red candles → Potential bullish bounce")
-            
-            if rc_bull_1d.empty and rc_bull_1w.empty and rc_bull_1m.empty:
-                st.info("No bullish reversal candidates found.")
-            else:
-                st.write("**1D (5+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-                st.write("**1W (4+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-                st.write("**1M (3+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1m, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-
-        # === BEARISH COLUMN ===
-        with col_bear:
-            st.header("🐻 Bearish Scans")
-            
-            st.subheader("FVG Breakdowns")
-            st.caption("Fresh break of structure on the FVG formation candle.")
-            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            
-            st.subheader("🔄 iFVG Reversals")
-            st.caption("5-Candle Inverted V: Bull FVG (Pop) → Bear FVG (Drop)")
-            
-            if brif_1d.empty and brif_1w.empty and brif_1m.empty:
-                 st.info("No iFVG setups found.")
-            else:
-                 st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-                 st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-                 st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-
-            st.divider()
-            st.subheader("Order Block Breakdowns")
-            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            st.write("**6M**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_6m, is_macro), display_cols), hide_index=True, use_container_width=True)
-            
-            st.divider()
-            st.subheader("🔄 Trend Reversals (Exhaustion)")
-            st.write("**1W (Chop < 25)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(rev_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-
-            st.divider()
-            st.subheader("🔺 Reversal Candidates For Shorts")
-            st.caption("Consecutive green candles → Potential bearish pullback")
-            
-            if rc_bear_1d.empty and rc_bear_1w.empty and rc_bear_1m.empty:
-                st.info("No bearish reversal candidates found.")
-            else:
-                st.write("**1D (5+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-                st.write("**1W (4+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-                st.write("**1M (3+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1m, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-
-        # === FULL WIDTH: WATCHLIST ===
+        if bull_table is not None and not bull_table.empty:
+            st.dataframe(
+                bull_table,
+                hide_index=True,
+                use_container_width=True,
+                height=min(len(bull_table) * 35 + 60, 600)
+            )
+        else:
+            st.info("No bullish setups found.")
+        
         st.divider()
-        st.header("⚡ Volatility Squeeze Watchlist (Potential Big Move)")
-        c1, c2 = st.columns(2)
-        with c1:
-            st.write("**Daily Squeeze (Chop > 59)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(sq_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
-        with c2:
-            st.write("**Weekly Squeeze (Chop > 59)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(sq_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+        
+        st.header("🐻 Bearish Scans")
+        st.caption("Stocks showing bearish setups across multiple timeframes")
+        
+        if bear_table is not None and not bear_table.empty:
+            st.dataframe(
+                bear_table,
+                hide_index=True,
+                use_container_width=True,
+                height=min(len(bear_table) * 35 + 60, 600)
+            )
+        else:
+            st.info("No bearish setups found.")
+        
+        # Summary stats
+        st.divider()
+        st.subheader("📊 Scan Summary")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            bull_count = len([r for r in bullish_results if r.get('has_signal')])
+            st.metric("Bullish Setups", bull_count)
+        
+        with col2:
+            bear_count = len([r for r in bearish_results if r.get('has_signal')])
+            st.metric("Bearish Setups", bear_count)
+        
+        with col3:
+            st.metric("Total Scanned", len(tickers))
 
 if __name__ == "__main__":
-
     main()
