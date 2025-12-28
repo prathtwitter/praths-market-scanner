@@ -160,12 +160,23 @@ class MathWiz:
 # ==========================================
 @st.cache_data
 def load_tickers(market_choice):
-    filename = "ind_tickers.csv" if "India" in market_choice else "us_tickers.csv"
+    if "Macro" in market_choice:
+        filename = "macro_tickers.csv"
+    elif "India" in market_choice:
+        filename = "ind_tickers.csv"
+    else:
+        filename = "us_tickers.csv"
+        
     if not os.path.exists(filename):
         st.error(f"❌ '{filename}' not found. Ensure CSV files are in the repository.")
         return []
     try:
         df = pd.read_csv(filename)
+        
+        # For macro tickers, return the Ticker column directly
+        if "Macro" in market_choice:
+            return df['Ticker'].tolist()
+        
         raw = df.iloc[:, 0].tolist()
         clean = [str(t).strip().upper() for t in raw]
         if "India" in market_choice:
@@ -173,14 +184,32 @@ def load_tickers(market_choice):
         return clean
     except: return []
 
+@st.cache_data
+def load_macro_metadata():
+    """Load macro ticker metadata for display purposes"""
+    filename = "macro_tickers.csv"
+    if not os.path.exists(filename):
+        return {}
+    try:
+        df = pd.read_csv(filename)
+        return dict(zip(df['Ticker'], df['Name']))
+    except:
+        return {}
+
 @st.cache_data(ttl=3600)
 def fetch_bulk_data(tickers, interval="1d", period="2y"):
     if not tickers: return None
     data = yf.download(tickers, period=period, interval=interval, group_by='ticker', progress=True, threads=True)
     return data
 
-def filter_top_5_by_cap(df_results):
+def filter_top_5_by_cap(df_results, is_macro=False):
+    """Filter top 5 by market cap. For macro scanner, skip market cap filtering."""
     if df_results.empty: return df_results
+    
+    # For macro scanner, just return top 5 without market cap filtering
+    if is_macro:
+        return df_results.head(5)
+    
     tickers = df_results['Ticker'].unique().tolist()
     caps = []
     
@@ -363,8 +392,15 @@ def main():
     if 'scan_triggered' not in st.session_state:
         st.session_state.scan_triggered = False
         
-    market = st.sidebar.selectbox("Market Sector", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
+    market = st.sidebar.selectbox("Market Sector", [
+        "US Markets (Nasdaq 100)", 
+        "Indian Markets (Nifty 200)",
+        "🌍 Macro Scanner (Global Indices & Commodities)"
+    ])
+    
+    is_macro = "Macro" in market
     tickers = load_tickers(market)
+    macro_names = load_macro_metadata() if is_macro else {}
     
     # Sidebar buttons
     col_scan, col_refresh = st.sidebar.columns(2)
@@ -382,20 +418,37 @@ def main():
         st.info("👋 Welcome! Select a market and click **🎯 Run Scan** to analyze stocks.")
         
         # Show market info
-        market_name = "Nasdaq 100" if "US" in market else "Nifty 200"
-        st.markdown(f"""
-        ### Ready to Scan: {market_name}
-        
-        **Available Scans:**
-        - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support
-        - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals
-        - ⚡ **Watchlist:** Volatility Squeeze (Daily & Weekly)
-        
-        **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
-        """)
+        if is_macro:
+            market_name = "Macro Scanner"
+            st.markdown(f"""
+            ### Ready to Scan: {market_name}
+            
+            **Macro Assets Covered:**
+            - 🇺🇸 **US Sectors:** XLC, XLY, XLP, XLE, XLF, XLV, XLI, XLK, XLB, XLRE, XLU
+            - 🇮🇳 **India Sectors:** Nifty Auto, Bank, IT, Pharma, Metal, Realty, FMCG, Energy, PSU Bank, Media
+            - 🌏 **Global Indices:** Nikkei 225, Dow Jones, Nifty 50, Midcap, Smallcap
+            - 🥇 **Commodities:** Gold, Silver, Platinum, Copper, Natural Gas, Crude Oil
+            - 💱 **Currencies:** USD/INR, CAD/INR, USD/CAD, EUR/USD, DXY
+            - ₿ **Crypto:** Bitcoin, Ethereum, XRP
+            - 📊 **Bonds:** US 10Y, US 30Y Treasury Yields
+            
+            **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
+            """)
+        else:
+            market_name = "Nasdaq 100" if "US" in market else "Nifty 200"
+            st.markdown(f"""
+            ### Ready to Scan: {market_name}
+            
+            **Available Scans:**
+            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support
+            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals
+            - ⚡ **Watchlist:** Volatility Squeeze (Daily & Weekly)
+            
+            **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
+            """)
         
         if tickers:
-            st.caption(f"📊 {len(tickers)} stocks loaded and ready to scan")
+            st.caption(f"📊 {len(tickers)} {'assets' if is_macro else 'stocks'} loaded and ready to scan")
         return
 
     # Run scan only when triggered
@@ -434,6 +487,10 @@ def main():
                 st.warning("No setups found.")
                 status.update(label="Analysis Complete (No matches)", state="complete")
                 return
+
+            # Add Name column for macro scanner
+            if is_macro and 'Ticker' in df_all.columns:
+                df_all['Name'] = df_all['Ticker'].map(macro_names).fillna(df_all['Ticker'])
 
             def get_res(type_name, tf=None):
                 if tf:
@@ -477,6 +534,16 @@ def main():
 
             status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
+        # Define display columns based on scanner type
+        display_cols = ['Ticker', 'Name', 'Price'] if is_macro else ['Ticker', 'Price']
+        
+        def safe_display(df, cols):
+            """Safely display dataframe with available columns"""
+            available_cols = [c for c in cols if c in df.columns]
+            if not available_cols:
+                return df
+            return df[available_cols]
+
         # --- DISPLAY GRID ---
         col_bull, col_bear = st.columns(2)
         
@@ -486,9 +553,9 @@ def main():
             
             st.subheader("FVG Breakouts")
             st.caption("Fresh break of structure on the FVG formation candle.")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bf_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
 
             st.subheader("🔄 iFVG Reversals")
             st.caption("5-Candle V-Shape: Bear FVG (Drop) → Bull FVG (Pop)")
@@ -496,20 +563,20 @@ def main():
             if bif_1d.empty and bif_1w.empty and bif_1m.empty:
                  st.info("No iFVG setups found.")
             else:
-                 st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-                 st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-                 st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+                 st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+                 st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bif_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
             
             st.divider()
             st.subheader("Order Block Breakouts")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(bob_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(bob_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(bob_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**6M**"); st.dataframe(filter_top_5_by_cap(bob_6m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**6M**"); st.dataframe(safe_display(filter_top_5_by_cap(bob_6m, is_macro), display_cols), hide_index=True, use_container_width=True)
             
             st.divider()
             st.subheader("🛡️ Strong FVG Support (3M/6M/12M)")
-            st.dataframe(filter_top_5_by_cap(sup_res), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sup_res, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
 
         # === BEARISH COLUMN ===
         with col_bear:
@@ -517,9 +584,9 @@ def main():
             
             st.subheader("FVG Breakdowns")
             st.caption("Fresh break of structure on the FVG formation candle.")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brf_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brf_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brf_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brf_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
             
             st.subheader("🔄 iFVG Reversals")
             st.caption("5-Candle Inverted V: Bull FVG (Pop) → Bear FVG (Drop)")
@@ -527,21 +594,21 @@ def main():
             if brif_1d.empty and brif_1w.empty and brif_1m.empty:
                  st.info("No iFVG setups found.")
             else:
-                 st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brif_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-                 st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brif_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-                 st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brif_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+                 st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+                 st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+                 st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brif_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
 
             st.divider()
             st.subheader("Order Block Breakdowns")
-            st.write("**1D**"); st.dataframe(filter_top_5_by_cap(brob_1d)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1W**"); st.dataframe(filter_top_5_by_cap(brob_1w)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**1M**"); st.dataframe(filter_top_5_by_cap(brob_1m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
-            st.write("**6M**"); st.dataframe(filter_top_5_by_cap(brob_6m)[['Ticker', 'Price']], hide_index=True, use_container_width=True)
+            st.write("**1D**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1d, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1W**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1w, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**1M**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_1m, is_macro), display_cols), hide_index=True, use_container_width=True)
+            st.write("**6M**"); st.dataframe(safe_display(filter_top_5_by_cap(brob_6m, is_macro), display_cols), hide_index=True, use_container_width=True)
             
             st.divider()
             st.subheader("🔄 Trend Reversals (Exhaustion)")
             st.write("**1W (Chop < 25)**")
-            st.dataframe(filter_top_5_by_cap(rev_res), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(rev_res, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
 
         # === FULL WIDTH: WATCHLIST ===
         st.divider()
@@ -549,10 +616,10 @@ def main():
         c1, c2 = st.columns(2)
         with c1:
             st.write("**Daily Squeeze (Chop > 59)**")
-            st.dataframe(filter_top_5_by_cap(sq_1d), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sq_1d, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
         with c2:
             st.write("**Weekly Squeeze (Chop > 59)**")
-            st.dataframe(filter_top_5_by_cap(sq_1w), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sq_1w, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
 
 if __name__ == "__main__":
     main()
