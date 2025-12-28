@@ -683,7 +683,7 @@ def main():
             st.dataframe(safe_display(filter_top_5_by_cap(sup_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
             st.divider()
-            st.subheader("🔻 Reversal Candidates (Oversold)")
+            st.subheader("🔻 Reversal Candidates For Buy")
             st.caption("Consecutive red candles → Potential bullish bounce")
             
             if rc_bull_1d.empty and rc_bull_1w.empty and rc_bull_1m.empty:
@@ -726,7 +726,7 @@ def main():
             st.dataframe(safe_display(filter_top_5_by_cap(rev_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
             st.divider()
-            st.subheader("🔺 Reversal Candidates (Overbought)")
+            st.subheader("🔺 Reversal Candidates For Shorts")
             st.caption("Consecutive green candles → Potential bearish pullback")
             
             if rc_bear_1d.empty and rc_bear_1w.empty and rc_bear_1m.empty:
@@ -748,4 +748,5 @@ def main():
             st.dataframe(safe_display(filter_top_5_by_cap(sq_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
 if __name__ == "__main__":
+
     main()
