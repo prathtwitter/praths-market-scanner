@@ -178,9 +178,16 @@ class MathWiz:
 
     @staticmethod
     def find_fvg(df):
-        # Bullish: Low[i] > High[i-2]
+        """
+        Fair Value Gap Detection:
+        - Bullish FVG: Low of candle 3 > High of candle 1 (gap up, imbalance)
+        - Bearish FVG: High of candle 3 < Low of candle 1 (gap down, imbalance)
+        
+        Returns boolean series where True at index i means candle i is the 3rd candle of an FVG pattern
+        """
+        # Bullish: Low[i] > High[i-2] (current candle's low is above candle 1's high)
         bull_fvg = (df['Low'] > df['High'].shift(2))
-        # Bearish: High[i] < Low[i-2]
+        # Bearish: High[i] < Low[i-2] (current candle's high is below candle 1's low)
         bear_fvg = (df['High'] < df['Low'].shift(2))
         return bull_fvg, bear_fvg
     
@@ -286,50 +293,66 @@ def scan_logic(ticker, df_d, df_m, scan_type):
         price = round(curr['Close'], 2)
 
         # ----------------------------------------
-        # FVG SCAN (NEW OPPOSING LOGIC)
+        # FVG SCAN (OPPOSING FVG BREAKOUT LOGIC)
         # ----------------------------------------
         if "FVG" in scan_type:
-            # Pre-calculate FVGs for history
+            # Pre-calculate FVGs for entire history
+            # FVG is detected on candle 3 (index i) where:
+            #   Bullish: Low[i] > High[i-2] (gap up)
+            #   Bearish: High[i] < Low[i-2] (gap down)
             df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
             
+            # Check if latest candle has a Bullish FVG
+            latest_has_bull_fvg = df['Bull_FVG'].iloc[-1] if len(df) > 2 else False
+            # Check if latest candle has a Bearish FVG
+            latest_has_bear_fvg = df['Bear_FVG'].iloc[-1] if len(df) > 2 else False
+            
             # --- BULLISH FVG BREAKOUT ---
-            if "Bullish" in scan_type and df['Bull_FVG'].iloc[-1]:
-                # 1. Look for most recent Bearish FVG in history (ignoring current if weirdly overlapped)
-                bear_fvg_indices = np.where(df['Bear_FVG'])[0]
-                # Exclude current candle index (len-1)
+            # Condition: Latest candle creates Bullish FVG AND breaks swing high from most recent Bearish FVG
+            if "Bullish" in scan_type and latest_has_bull_fvg:
+                # Find most recent Bearish FVG BEFORE the current candle
+                # Bear_FVG is True at index i (candle 3 of pattern)
+                # Candle 1 of that pattern is at index i-2
+                bear_fvg_indices = np.where(df['Bear_FVG'].values)[0]
+                # Exclude current candle (we want historical bearish FVGs only)
                 bear_fvg_indices = bear_fvg_indices[bear_fvg_indices < len(df) - 1]
                 
                 if len(bear_fvg_indices) > 0:
-                    last_bear_idx = bear_fvg_indices[-1] # Index of candle 3 of the bearish pattern
-                    # Candle 1 of the pattern is index - 2
-                    ref_candle_idx = last_bear_idx - 2
+                    # Get the most recent bearish FVG (candle 3 position)
+                    last_bear_fvg_candle3_idx = bear_fvg_indices[-1]
+                    # Candle 1 of the bearish FVG pattern is 2 positions before candle 3
+                    candle1_idx = last_bear_fvg_candle3_idx - 2
                     
-                    if ref_candle_idx >= 0:
+                    if candle1_idx >= 0:
                         # Swing High = High of Candle 1 of the Bearish FVG
-                        swing_high = df['High'].iloc[ref_candle_idx]
+                        swing_high = df['High'].iloc[candle1_idx]
                         
-                        # Trigger: Current Close > Swing High
+                        # Trigger: Current candle's Close breaks above this Swing High
                         if curr['Close'] > swing_high:
-                            info_txt = f"Broke Bear FVG High ({round(swing_high, 2)})"
+                            info_txt = f"Swing High: {round(swing_high, 2)}"
                             results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
             # --- BEARISH FVG BREAKDOWN ---
-            if "Bearish" in scan_type and df['Bear_FVG'].iloc[-1]:
-                # 1. Look for most recent Bullish FVG
-                bull_fvg_indices = np.where(df['Bull_FVG'])[0]
+            # Condition: Latest candle creates Bearish FVG AND breaks swing low from most recent Bullish FVG
+            if "Bearish" in scan_type and latest_has_bear_fvg:
+                # Find most recent Bullish FVG BEFORE the current candle
+                bull_fvg_indices = np.where(df['Bull_FVG'].values)[0]
+                # Exclude current candle
                 bull_fvg_indices = bull_fvg_indices[bull_fvg_indices < len(df) - 1]
                 
                 if len(bull_fvg_indices) > 0:
-                    last_bull_idx = bull_fvg_indices[-1]
-                    ref_candle_idx = last_bull_idx - 2
+                    # Get the most recent bullish FVG (candle 3 position)
+                    last_bull_fvg_candle3_idx = bull_fvg_indices[-1]
+                    # Candle 1 of the bullish FVG pattern is 2 positions before candle 3
+                    candle1_idx = last_bull_fvg_candle3_idx - 2
                     
-                    if ref_candle_idx >= 0:
+                    if candle1_idx >= 0:
                         # Swing Low = Low of Candle 1 of the Bullish FVG
-                        swing_low = df['Low'].iloc[ref_candle_idx]
+                        swing_low = df['Low'].iloc[candle1_idx]
                         
-                        # Trigger: Current Close < Swing Low
+                        # Trigger: Current candle's Close breaks below this Swing Low
                         if curr['Close'] < swing_low:
-                            info_txt = f"Broke Bull FVG Low ({round(swing_low, 2)})"
+                            info_txt = f"Swing Low: {round(swing_low, 2)}"
                             results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": info_txt})
 
         # ----------------------------------------
