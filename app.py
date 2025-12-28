@@ -155,6 +155,39 @@ class MathWiz:
                     return True 
         return False
 
+    @staticmethod
+    def check_consecutive_candles(df, num_candles):
+        """
+        Checks for consecutive red or green candles at the end of the dataframe.
+        
+        Args:
+            df: DataFrame with OHLC data
+            num_candles: Number of consecutive candles to check
+            
+        Returns:
+            'Bull' if num_candles consecutive red candles (bullish reversal potential)
+            'Bear' if num_candles consecutive green candles (bearish reversal potential)
+            None if neither condition is met
+        """
+        if len(df) < num_candles:
+            return None
+        
+        # Get the last num_candles
+        recent = df.iloc[-num_candles:]
+        
+        # Check if all candles are red (Close < Open)
+        all_red = all(recent['Close'] < recent['Open'])
+        
+        # Check if all candles are green (Close > Open)
+        all_green = all(recent['Close'] > recent['Open'])
+        
+        if all_red:
+            return 'Bull'  # Consecutive red = bullish reversal potential
+        elif all_green:
+            return 'Bear'  # Consecutive green = bearish reversal potential
+        
+        return None
+
 # ==========================================
 # 4. ROBUST DATA ENGINE
 # ==========================================
@@ -350,7 +383,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
              "Info": ", ".join(sup_tf)
          })
 
-    # 3. REVERSALS
+    # 3. REVERSALS (Choppiness-based)
     if not d_1w.empty:
         chop_series = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
         if not chop_series.empty and not pd.isna(chop_series.iloc[-1]):
@@ -372,6 +405,67 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             chop_w2 = chop_series_w2.iloc[-1]
             if chop_w2 > 59:
                  results.append({"Ticker": ticker, "Price": round(d_1w['Close'].iloc[-1], 2), "Type": "Squeeze", "TF": "1W", "Info": round(chop_w2, 2)})
+
+    # 5. REVERSAL CANDIDATES (Consecutive Candle Scan)
+    # 1D: 5+ consecutive candles
+    if not d_1d.empty and len(d_1d) >= 5:
+        rev_1d = MathWiz.check_consecutive_candles(d_1d, 5)
+        if rev_1d == 'Bull':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1d['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bull", 
+                "TF": "1D",
+                "Info": "5+ Red Candles"
+            })
+        elif rev_1d == 'Bear':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1d['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bear", 
+                "TF": "1D",
+                "Info": "5+ Green Candles"
+            })
+    
+    # 1W: 4+ consecutive candles
+    if not d_1w.empty and len(d_1w) >= 4:
+        rev_1w = MathWiz.check_consecutive_candles(d_1w, 4)
+        if rev_1w == 'Bull':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1w['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bull", 
+                "TF": "1W",
+                "Info": "4+ Red Candles"
+            })
+        elif rev_1w == 'Bear':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1w['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bear", 
+                "TF": "1W",
+                "Info": "4+ Green Candles"
+            })
+    
+    # 1M: 3+ consecutive candles
+    if not d_1m.empty and len(d_1m) >= 3:
+        rev_1m = MathWiz.check_consecutive_candles(d_1m, 3)
+        if rev_1m == 'Bull':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1m['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bull", 
+                "TF": "1M",
+                "Info": "3+ Red Candles"
+            })
+        elif rev_1m == 'Bear':
+            results.append({
+                "Ticker": ticker, 
+                "Price": round(d_1m['Close'].iloc[-1], 2), 
+                "Type": "Rev_Candidate_Bear", 
+                "TF": "1M",
+                "Info": "3+ Green Candles"
+            })
 
     return results
 
@@ -440,8 +534,8 @@ def main():
             ### Ready to Scan: {market_name}
             
             **Available Scans:**
-            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support
-            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals
+            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support, Reversal Candidates
+            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals, Reversal Candidates
             - ⚡ **Watchlist:** Volatility Squeeze (Daily & Weekly)
             
             **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
@@ -532,10 +626,20 @@ def main():
             sq_1d = get_res("Squeeze", "1D")
             sq_1w = get_res("Squeeze", "1W")
 
+            # Reversal Candidates (NEW)
+            rc_bull_1d = get_res("Rev_Candidate_Bull", "1D")
+            rc_bull_1w = get_res("Rev_Candidate_Bull", "1W")
+            rc_bull_1m = get_res("Rev_Candidate_Bull", "1M")
+            
+            rc_bear_1d = get_res("Rev_Candidate_Bear", "1D")
+            rc_bear_1w = get_res("Rev_Candidate_Bear", "1W")
+            rc_bear_1m = get_res("Rev_Candidate_Bear", "1M")
+
             status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
         # Define display columns based on scanner type
         display_cols = ['Ticker', 'Name', 'Price'] if is_macro else ['Ticker', 'Price']
+        display_cols_info = ['Ticker', 'Name', 'Price', 'Info'] if is_macro else ['Ticker', 'Price', 'Info']
         
         def safe_display(df, cols):
             """Safely display dataframe with available columns"""
@@ -576,7 +680,18 @@ def main():
             
             st.divider()
             st.subheader("🛡️ Strong FVG Support (3M/6M/12M)")
-            st.dataframe(safe_display(filter_top_5_by_cap(sup_res, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sup_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+
+            st.divider()
+            st.subheader("🔻 Reversal Candidates (Oversold)")
+            st.caption("Consecutive red candles → Potential bullish bounce")
+            
+            if rc_bull_1d.empty and rc_bull_1w.empty and rc_bull_1m.empty:
+                st.info("No bullish reversal candidates found.")
+            else:
+                st.write("**1D (5+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+                st.write("**1W (4+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+                st.write("**1M (3+ Red)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bull_1m, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
         # === BEARISH COLUMN ===
         with col_bear:
@@ -608,7 +723,18 @@ def main():
             st.divider()
             st.subheader("🔄 Trend Reversals (Exhaustion)")
             st.write("**1W (Chop < 25)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(rev_res, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(rev_res, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+
+            st.divider()
+            st.subheader("🔺 Reversal Candidates (Overbought)")
+            st.caption("Consecutive green candles → Potential bearish pullback")
+            
+            if rc_bear_1d.empty and rc_bear_1w.empty and rc_bear_1m.empty:
+                st.info("No bearish reversal candidates found.")
+            else:
+                st.write("**1D (5+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+                st.write("**1W (4+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
+                st.write("**1M (3+ Green)**"); st.dataframe(safe_display(filter_top_5_by_cap(rc_bear_1m, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
         # === FULL WIDTH: WATCHLIST ===
         st.divider()
@@ -616,10 +742,10 @@ def main():
         c1, c2 = st.columns(2)
         with c1:
             st.write("**Daily Squeeze (Chop > 59)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(sq_1d, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sq_1d, is_macro), display_cols_info), hide_index=True, use_container_width=True)
         with c2:
             st.write("**Weekly Squeeze (Chop > 59)**")
-            st.dataframe(safe_display(filter_top_5_by_cap(sq_1w, is_macro), display_cols + ['Info'] if is_macro else ['Ticker', 'Price', 'Info']), hide_index=True, use_container_width=True)
+            st.dataframe(safe_display(filter_top_5_by_cap(sq_1w, is_macro), display_cols_info), hide_index=True, use_container_width=True)
 
 if __name__ == "__main__":
     main()
