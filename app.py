@@ -18,7 +18,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Market Scanner v4.1 (Stable)", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Market Scanner v4.3 (Gemini 3)", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -59,23 +59,17 @@ def check_password():
 class AI_Analyst:
     @staticmethod
     def get_earnings_date_bulk(tickers):
-        """Fetches earnings dates robustly."""
         results = {}
-        
         def fetch_single(ticker):
             try:
                 stock = yf.Ticker(ticker)
-                # Method 1: get_earnings_dates (DataFrame index contains dates)
+                # Method 1: get_earnings_dates
                 dates_df = stock.get_earnings_dates(limit=8)
-                
                 if dates_df is not None and not dates_df.empty:
-                    # Filter for future dates
                     now = pd.Timestamp.now().tz_localize(dates_df.index.dtype.tz) if dates_df.index.tz else pd.Timestamp.now()
                     future_dates = dates_df[dates_df.index > now].sort_index()
-                    
                     if not future_dates.empty:
                         next_date = future_dates.index[0]
-                        # Calculate days left
                         delta = (next_date - now).days
                         date_str = next_date.strftime('%b %d')
                         return ticker, f"{date_str} ({delta}d)"
@@ -83,19 +77,14 @@ class AI_Analyst:
                 # Method 2: Calendar fallback
                 cal = stock.calendar
                 if cal is not None and not cal.empty:
-                    # Handle varying formats (dict vs df)
                     val = cal.iloc[0, 0] if isinstance(cal, pd.DataFrame) else cal.get('Earnings Date', [None])[0]
-                    if val:
-                        # Ensure comparison works
-                        if isinstance(val, (datetime.date, datetime.datetime)):
-                            delta = (val - datetime.date.today()).days
-                            return ticker, f"{val.strftime('%b %d')} ({delta}d)"
-
+                    if val and isinstance(val, (datetime.date, datetime.datetime)):
+                        delta = (val - datetime.date.today()).days
+                        return ticker, f"{val.strftime('%b %d')} ({delta}d)"
                 return ticker, "No Data"
-            except Exception:
+            except:
                 return ticker, "-"
 
-        # Limit threads to prevent rate limiting
         with ThreadPoolExecutor(max_workers=5) as executor:
             future_to_ticker = {executor.submit(fetch_single, t): t for t in tickers}
             for future in future_to_ticker:
@@ -108,14 +97,12 @@ class AI_Analyst:
 
     @staticmethod
     def select_top_pick(df_bucket, scan_type):
-        """Analyzes list and selects best setup."""
         if not AI_AVAILABLE: return "⚠️ AI not available."
-        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key missing."
+        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key missing in Secrets."
         if df_bucket.empty: return "No stocks to analyze."
 
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
-        # Data Summary for LLM
         summary = df_bucket[['Ticker', 'Price', 'Chop', 'TF', 'Info']].head(10).to_string(index=False)
         
         prompt = f"""
@@ -138,8 +125,8 @@ class AI_Analyst:
         """
         
         try:
-            # Reverted to 1.5 Flash for stability and rate limits
-            model = genai.GenerativeModel('gemini-1.5-flash') 
+            # UPDATED TO GEMINI 3 FLASH BASED ON YOUR DASHBOARD
+            model = genai.GenerativeModel('gemini-3-flash') 
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
@@ -217,7 +204,6 @@ def load_tickers(market_choice):
         filename = "ind_tickers.csv"
     else:
         filename = "us_tickers.csv"
-        
     if not os.path.exists(filename): return []
     try:
         df = pd.read_csv(filename)
@@ -269,13 +255,10 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         df = data_map[tf].copy()
-        
         chop_series = MathWiz.calculate_choppiness(df['High'], df['Low'], df['Close'])
         current_chop = round(chop_series.iloc[-1], 2) if not chop_series.empty else 0
-
         df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
         df['Is_High'], df['Is_Low'] = MathWiz.identify_strict_swings(df)
-        
         curr, prev = df.iloc[-1], df.iloc[-2]
         price = round(curr['Close'], 2)
 
@@ -283,7 +266,6 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
             past = df[df['Is_High']]
             if not past.empty and curr['Close'] > past['High'].iloc[-1] and prev['Close'] <= past['High'].iloc[-1]:
                 results.append({"Ticker": ticker, "Price": price, "Type": "Bull_FVG", "TF": tf, "Chop": current_chop, "Info": ""})
-        
         if curr['Bear_FVG']:
             past = df[df['Is_Low']]
             if not past.empty and curr['Close'] < past['Low'].iloc[-1] and prev['Close'] >= past['Low'].iloc[-1]:
@@ -325,14 +307,10 @@ def analyze_ticker(ticker, df_d_raw, df_m_raw):
 # 7. MAIN UI
 # ==========================================
 def display_section_with_ai(df, scan_type, key_suffix):
-    """
-    Displays the table with an ON-DEMAND AI button to prevent 429 errors.
-    """
     if df.empty:
         st.caption("No setups found.")
         return
 
-    # Unique key for the button is crucial
     if st.button(f"✨ Analyze Top Pick ({scan_type})", key=f"btn_{key_suffix}"):
         with st.spinner("AI Analyst is thinking..."):
             ai_verdict = AI_Analyst.select_top_pick(df, scan_type)
@@ -367,7 +345,7 @@ def main():
             st.sidebar.metric(name, "Err", "0.00")
 
     st.sidebar.divider()
-    st.title("Prath's Market Scanner v4.1")
+    st.title("Prath's Market Scanner v4.3")
     
     market = st.sidebar.selectbox("Select Market", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
     tickers = load_tickers(market)
@@ -399,7 +377,6 @@ def main():
         
         df_all = pd.DataFrame(all_res)
         
-        # --- ROBUST EARNINGS FETCH ---
         if not df_all.empty:
             unique_tickers = df_all['Ticker'].unique().tolist()
             with st.spinner("Fetching Earnings Dates..."):
@@ -409,11 +386,8 @@ def main():
                 ticker = row['Ticker']
                 earn_str = earnings_map.get(ticker, "-")
                 current_info = row.get('Info', "")
-                
                 if "Earnings Passed" in earn_str or earn_str == "-":
-                    # Keep existing info if earnings isn't relevant/found
                     return current_info if current_info else "-"
-                
                 if current_info and earn_str:
                     return f"{current_info} | Earn: {earn_str}"
                 return f"Earn: {earn_str}"
