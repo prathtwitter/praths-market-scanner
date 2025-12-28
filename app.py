@@ -358,15 +358,48 @@ def main():
     if 'init_done' not in st.session_state:
         st.cache_data.clear()
         st.session_state.init_done = True
+    
+    # Initialize scan state
+    if 'scan_triggered' not in st.session_state:
+        st.session_state.scan_triggered = False
         
-    market = st.sidebar.selectbox("Market Sector", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 500)"])
+    market = st.sidebar.selectbox("Market Sector", ["US Markets (Nasdaq 100)", "Indian Markets (Nifty 200)"])
     tickers = load_tickers(market)
     
-    if st.sidebar.button("🔄 Refresh Dashboard", type="primary"):
-        st.cache_data.clear()
-        st.rerun()
+    # Sidebar buttons
+    col_scan, col_refresh = st.sidebar.columns(2)
+    with col_scan:
+        if st.button("🎯 Run Scan", type="primary", use_container_width=True):
+            st.session_state.scan_triggered = True
+    with col_refresh:
+        if st.button("🔄 Refresh", type="secondary", use_container_width=True):
+            st.cache_data.clear()
+            st.session_state.scan_triggered = False
+            st.rerun()
 
-    if tickers:
+    # Show welcome message if scan not triggered
+    if not st.session_state.scan_triggered:
+        st.info("👋 Welcome! Select a market and click **🎯 Run Scan** to analyze stocks.")
+        
+        # Show market info
+        market_name = "Nasdaq 100" if "US" in market else "Nifty 200"
+        st.markdown(f"""
+        ### Ready to Scan: {market_name}
+        
+        **Available Scans:**
+        - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support
+        - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Reversals
+        - ⚡ **Watchlist:** Volatility Squeeze (Daily & Weekly)
+        
+        **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
+        """)
+        
+        if tickers:
+            st.caption(f"📊 {len(tickers)} stocks loaded and ready to scan")
+        return
+
+    # Run scan only when triggered
+    if tickers and st.session_state.scan_triggered:
         with st.status("🚀 Running Parallel Scans...", expanded=True) as status:
             
             st.write("Fetching Market Data...")
