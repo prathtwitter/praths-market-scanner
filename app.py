@@ -17,7 +17,7 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v5.7", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v5.8", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
@@ -28,11 +28,12 @@ st.markdown("""
         width: 100%; 
         border-radius: 8px; 
         font-weight: bold;
-        height: 50px;
+        height: 45px;
         background-color: #1f2937;
         color: white;
         border: 1px solid #374151;
-        margin-bottom: 5px;
+        margin-top: 5px;
+        margin-bottom: 15px;
     }
     .stButton>button:hover {
         border-color: #00CC96;
@@ -48,22 +49,25 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* UNIFORM IMAGE SIZING */
-    div[data-testid="stImage"] img {
-        height: 200px !important;       /* Fixed height for alignment */
-        object-fit: cover !important;   /* Crop to fit, don't stretch */
-        border-radius: 8px;
-        border: 1px solid #333;
-        margin-bottom: 5px;
+    /* Clean up headers in columns */
+    h4 {
+        padding-top: 10px;
+        margin-bottom: 0px;
+        color: #e5e7eb;
     }
     
-    /* Caption Styling */
+    /* Definitions */
     div[data-testid="stCaptionContainer"] {
         color: #9ca3af;
-        font-size: 12px;
-        margin-bottom: 25px;
-        height: 40px; /* Fixed height for alignment */
-        line-height: 1.2;
+        font-size: 13px;
+        margin-bottom: 10px;
+        line-height: 1.4;
+    }
+    
+    /* Image Container - REMOVED FIXED HEIGHT to keep original sizing */
+    .stImage img {
+        border-radius: 5px;
+        border: 1px solid #333;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -79,7 +83,6 @@ def check_password():
         return True
 
     def password_entered():
-        # CHECKS SECRETS FIRST, THEN FALLBACK
         correct_password = st.secrets.get("PASSWORD", "Sniper2025")
         if st.session_state["password"] == correct_password:
             st.session_state.password_correct = True
@@ -293,25 +296,20 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         df = data_map[tf].copy()
-        
         chop = 0
         if "Chop" not in df.columns:
             chop_s = MathWiz.calculate_choppiness(df['High'], df['Low'], df['Close'])
             chop = round(chop_s.iloc[-1], 2) if not chop_s.empty else 0
-        
-        curr = df.iloc[-1]
-        price = round(curr['Close'], 2)
+        curr = df.iloc[-1]; price = round(curr['Close'], 2)
 
         if "FVG" in scan_type:
             df['Bull'], df['Bear'] = MathWiz.find_fvg(df)
             df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
-            
             if "Bullish" in scan_type and curr['Bull']:
                 past_swings = df[df['Is_H']]
                 if not past_swings.empty:
                     if (df['Close'].iloc[-3:] > past_swings['High'].iloc[-1]).any():
                         results.append({"Ticker": ticker, "Price": price, "Chop": chop, "TF": tf, "Info": ""})
-            
             if "Bearish" in scan_type and curr['Bear']:
                 past_swings = df[df['Is_L']]
                 if not past_swings.empty:
@@ -381,7 +379,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v5.7")
+    st.title("Prath's Sniper v5.8")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -399,47 +397,59 @@ def main():
     c1, c2, c3 = st.columns(3)
     scan_request = None
     
+    # --- BULLISH COLUMN ---
     with c1:
         st.header("🐂 Bullish")
         
-        if st.button("Bullish FVG Breakouts"): scan_request = "Bullish FVG"
-        st.image(f"{repo_base}FVG%20Bullish%20Breakout.jpg", use_container_width=True)
+        st.markdown("#### FVG Breakouts")
         st.caption("A strong bullish candle creating a Fair Value Gap while simultaneously breaking a recent swing high structure.")
+        if st.button("Run: Bullish FVG"): scan_request = "Bullish FVG"
+        st.image(f"{repo_base}FVG%20Bullish%20Breakout.jpg", use_container_width=True)
         
-        if st.button("Bullish Order Blocks"): scan_request = "Bullish Order Block"
-        st.image(f"{repo_base}Bullish%20Order%20Block.jpg", use_container_width=True)
+        st.markdown("#### Order Blocks")
         st.caption("The last down-candle before an impulsive upward move that broke market structure, acting as a buy zone.")
+        if st.button("Run: Bullish OB"): scan_request = "Bullish Order Block"
+        st.image(f"{repo_base}Bullish%20Order%20Block.jpg", use_container_width=True)
         
-        if st.button("Bullish iFVG Reversal"): scan_request = "Bullish iFVG"
-        st.image(f"{repo_base}Bullish%20iFVG.jpg", use_container_width=True)
+        st.markdown("#### iFVG Reversal")
         st.caption("A failed bearish Fair Value Gap that price has reclaimed and closed above, flipping it into support.")
+        if st.button("Run: Bullish iFVG"): scan_request = "Bullish iFVG"
+        st.image(f"{repo_base}Bullish%20iFVG.jpg", use_container_width=True)
 
+    # --- BEARISH COLUMN ---
     with c2:
         st.header("🐻 Bearish")
         
-        if st.button("Bearish FVG Breakdowns"): scan_request = "Bearish FVG"
-        st.image(f"{repo_base}FVG%20Bearish%20Breakdown.jpg", use_container_width=True)
+        st.markdown("#### FVG Breakdowns")
         st.caption("A strong bearish candle creating a Fair Value Gap while simultaneously breaking a recent swing low structure.")
+        if st.button("Run: Bearish FVG"): scan_request = "Bearish FVG"
+        st.image(f"{repo_base}FVG%20Bearish%20Breakdown.jpg", use_container_width=True)
         
-        if st.button("Bearish Order Blocks"): scan_request = "Bearish Order Block"
-        st.image(f"{repo_base}Bearish%20Order%20Block.jpg", use_container_width=True)
+        st.markdown("#### Order Blocks")
         st.caption("The last up-candle before an impulsive downward move that broke market structure, acting as a sell zone.")
+        if st.button("Run: Bearish OB"): scan_request = "Bearish Order Block"
+        st.image(f"{repo_base}Bearish%20Order%20Block.jpg", use_container_width=True)
         
-        if st.button("Bearish iFVG Reversal"): scan_request = "Bearish iFVG"
-        st.image(f"{repo_base}Bearish%20iFVG.jpg", use_container_width=True)
+        st.markdown("#### iFVG Reversal")
         st.caption("A failed bullish Fair Value Gap that price has broken and closed below, flipping it into resistance.")
+        if st.button("Run: Bearish iFVG"): scan_request = "Bearish iFVG"
+        st.image(f"{repo_base}Bearish%20iFVG.jpg", use_container_width=True)
 
+    # --- VOLATILITY COLUMN ---
     with c3:
         st.header("⚡ Volatility")
         
-        if st.button("Strong Support Zones"): scan_request = "Strong Support"
-        st.image(f"{repo_base}Strong%20Support.jpg", use_container_width=True)
+        st.markdown("#### Strong Support Zones")
         st.caption("Price reacting off a high-timeframe (3M/6M) unmitigated Fair Value Gap, signaling major institutional interest.")
+        if st.button("Run: Strong Support"): scan_request = "Strong Support"
+        st.image(f"{repo_base}Strong%20Support.jpg", use_container_width=True)
         
-        if st.button("Volatility Squeezes"): scan_request = "Squeeze"
-        st.image(f"{repo_base}Volatility%20Squeeze.jpg", use_container_width=True)
+        st.markdown("#### Volatility Squeezes")
         st.caption("Price consolidating in an extremely tight range (Choppiness Index > 60), signaling an imminent explosive move.")
+        if st.button("Run: Volatility Squeeze"): scan_request = "Squeeze"
+        st.image(f"{repo_base}Volatility%20Squeeze.jpg", use_container_width=True)
 
+    # --- EXECUTION ---
     if scan_request:
         st.divider()
         st.subheader(f"🚀 Running Scan: {scan_request}...")
