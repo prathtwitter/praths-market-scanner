@@ -17,11 +17,13 @@ except ImportError:
 # ==========================================
 # 1. CONFIGURATION & STYLE
 # ==========================================
-st.set_page_config(page_title="Prath's Sniper v5.5", layout="wide", page_icon="🎯")
+st.set_page_config(page_title="Prath's Sniper v5.7", layout="wide", page_icon="🎯")
 st.markdown("""
 <style>
     .stApp { background-color: #0e1117; color: #FAFAFA; }
     div[data-testid="stMetricValue"] { font-size: 18px; color: #00CC96; }
+    
+    /* Button Styling */
     .stButton>button { 
         width: 100%; 
         border-radius: 8px; 
@@ -30,12 +32,14 @@ st.markdown("""
         background-color: #1f2937;
         color: white;
         border: 1px solid #374151;
-        margin-bottom: 10px;
+        margin-bottom: 5px;
     }
     .stButton>button:hover {
         border-color: #00CC96;
         color: #00CC96;
     }
+    
+    /* AI Box Styling */
     .ai-box {
         border: 2px solid #00CC96;
         background-color: #162b26;
@@ -43,11 +47,23 @@ st.markdown("""
         border-radius: 10px;
         margin-bottom: 20px;
     }
-    /* Chart Image Styling */
-    .stImage img {
-        border-radius: 5px;
+    
+    /* UNIFORM IMAGE SIZING */
+    div[data-testid="stImage"] img {
+        height: 200px !important;       /* Fixed height for alignment */
+        object-fit: cover !important;   /* Crop to fit, don't stretch */
+        border-radius: 8px;
         border: 1px solid #333;
-        margin-bottom: 15px;
+        margin-bottom: 5px;
+    }
+    
+    /* Caption Styling */
+    div[data-testid="stCaptionContainer"] {
+        color: #9ca3af;
+        font-size: 12px;
+        margin-bottom: 25px;
+        height: 40px; /* Fixed height for alignment */
+        line-height: 1.2;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -58,16 +74,22 @@ st.markdown("""
 def check_password():
     if "password_correct" not in st.session_state:
         st.session_state.password_correct = False
+    
     if st.session_state.password_correct:
         return True
+
     def password_entered():
-        if st.session_state["password"] == st.secrets.get("PASSWORD", "Sniper2025"):
+        # CHECKS SECRETS FIRST, THEN FALLBACK
+        correct_password = st.secrets.get("PASSWORD", "Sniper2025")
+        if st.session_state["password"] == correct_password:
             st.session_state.password_correct = True
             del st.session_state["password"]
         else:
             st.session_state.password_correct = False
+
     st.text_input("Enter Access Key", type="password", on_change=password_entered, key="password")
-    if not st.session_state.password_correct:
+    
+    if "password_correct" in st.session_state and not st.session_state.password_correct:
         st.error("⛔ Access Denied")
         return False
     return True
@@ -109,7 +131,7 @@ class AI_Analyst:
     @staticmethod
     def generate_top_pick(df, scan_name):
         if not AI_AVAILABLE: return "⚠️ AI Library Missing"
-        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key Missing in Secrets"
+        if "GEMINI_API_KEY" not in st.secrets: return "⚠️ API Key Missing"
         
         genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
         
@@ -123,16 +145,16 @@ class AI_Analyst:
         {data_str}
         
         **Your Mission:**
-        1.  Analyze the setups based on Price, Chop (Choppiness Index), and Timeframe.
+        1.  Analyze setups based on Price, Chop (Choppiness Index), and Timeframe.
         2.  **Filter:** Reject stocks with earnings in < 3 days.
-        3.  **Logic:** - Breakouts (FVG/OB): Prefer Chop < 40 (Trending).
+        3.  **Logic:** - Breakouts (FVG/OB): Prefer Chop < 40.
             - Reversals/Squeezes: Prefer Chop > 60.
         4.  **Select ONE Top Pick.**
         
         **Output Format (Strict):**
         **🏆 Top Pick: [TICKER]**
-        **Rationale:** [2 sentences on why this is the best setup technical-wise.]
-        **Trade Plan:** [Stop Loss idea based on volatility/price].
+        **Rationale:** [2 sentences technical reason.]
+        **Trade Plan:** [Stop Loss idea].
         """
         
         try:
@@ -285,7 +307,6 @@ def scan_logic(ticker, df_d, df_m, scan_type):
             df['Is_H'], df['Is_L'] = MathWiz.identify_strict_swings(df)
             
             if "Bullish" in scan_type and curr['Bull']:
-                # Relaxed: Look for break in last 3 candles
                 past_swings = df[df['Is_H']]
                 if not past_swings.empty:
                     if (df['Close'].iloc[-3:] > past_swings['High'].iloc[-1]).any():
@@ -329,12 +350,10 @@ def scan_logic(ticker, df_d, df_m, scan_type):
     if "Squeeze" in scan_type:
          if not data_map["1D"].empty:
             c_d = MathWiz.calculate_choppiness(data_map["1D"]['High'], data_map["1D"]['Low'], data_map["1D"]['Close']).iloc[-1]
-            if c_d > 59:
-                 results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Chop": round(c_d, 2), "TF": "1D", "Info": ""})
+            if c_d > 59: results.append({"Ticker": ticker, "Price": round(data_map["1D"]['Close'].iloc[-1], 2), "Chop": round(c_d, 2), "TF": "1D", "Info": ""})
          if not data_map["1W"].empty:
             c_w = MathWiz.calculate_choppiness(data_map["1W"]['High'], data_map["1W"]['Low'], data_map["1W"]['Close']).iloc[-1]
-            if c_w > 59:
-                 results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Chop": round(c_w, 2), "TF": "1W", "Info": ""})
+            if c_w > 59: results.append({"Ticker": ticker, "Price": round(data_map["1W"]['Close'].iloc[-1], 2), "Chop": round(c_w, 2), "TF": "1W", "Info": ""})
 
     return results
 
@@ -362,7 +381,7 @@ def main():
     
     st.sidebar.divider()
 
-    st.title("Prath's Sniper v5.5")
+    st.title("Prath's Sniper v5.7")
     
     col_mkt, col_status = st.columns([1, 2])
     with col_mkt:
@@ -375,8 +394,6 @@ def main():
         
     st.write("### 🎯 Select Strategy to Scan")
     
-    # --- REPO BASE URL ---
-    # We use 'raw.githubusercontent.com' to get the actual image file
     repo_base = "https://raw.githubusercontent.com/prathtwitter/praths-market-scanner/main/"
     
     c1, c2, c3 = st.columns(3)
@@ -387,33 +404,41 @@ def main():
         
         if st.button("Bullish FVG Breakouts"): scan_request = "Bullish FVG"
         st.image(f"{repo_base}FVG%20Bullish%20Breakout.jpg", use_container_width=True)
+        st.caption("A strong bullish candle creating a Fair Value Gap while simultaneously breaking a recent swing high structure.")
         
         if st.button("Bullish Order Blocks"): scan_request = "Bullish Order Block"
         st.image(f"{repo_base}Bullish%20Order%20Block.jpg", use_container_width=True)
+        st.caption("The last down-candle before an impulsive upward move that broke market structure, acting as a buy zone.")
         
         if st.button("Bullish iFVG Reversal"): scan_request = "Bullish iFVG"
         st.image(f"{repo_base}Bullish%20iFVG.jpg", use_container_width=True)
+        st.caption("A failed bearish Fair Value Gap that price has reclaimed and closed above, flipping it into support.")
 
     with c2:
         st.header("🐻 Bearish")
         
         if st.button("Bearish FVG Breakdowns"): scan_request = "Bearish FVG"
         st.image(f"{repo_base}FVG%20Bearish%20Breakdown.jpg", use_container_width=True)
+        st.caption("A strong bearish candle creating a Fair Value Gap while simultaneously breaking a recent swing low structure.")
         
         if st.button("Bearish Order Blocks"): scan_request = "Bearish Order Block"
         st.image(f"{repo_base}Bearish%20Order%20Block.jpg", use_container_width=True)
+        st.caption("The last up-candle before an impulsive downward move that broke market structure, acting as a sell zone.")
         
         if st.button("Bearish iFVG Reversal"): scan_request = "Bearish iFVG"
         st.image(f"{repo_base}Bearish%20iFVG.jpg", use_container_width=True)
+        st.caption("A failed bullish Fair Value Gap that price has broken and closed below, flipping it into resistance.")
 
     with c3:
         st.header("⚡ Volatility")
         
         if st.button("Strong Support Zones"): scan_request = "Strong Support"
         st.image(f"{repo_base}Strong%20Support.jpg", use_container_width=True)
+        st.caption("Price reacting off a high-timeframe (3M/6M) unmitigated Fair Value Gap, signaling major institutional interest.")
         
         if st.button("Volatility Squeezes"): scan_request = "Squeeze"
         st.image(f"{repo_base}Volatility%20Squeeze.jpg", use_container_width=True)
+        st.caption("Price consolidating in an extremely tight range (Choppiness Index > 60), signaling an imminent explosive move.")
 
     if scan_request:
         st.divider()
