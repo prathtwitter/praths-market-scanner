@@ -274,25 +274,29 @@ def resample_custom(df, timeframe):
 # ==========================================
 
 def count_signals(results, scan_type='bullish'):
-    """Count the number of True signals in a results dictionary."""
+    """
+    Count the number of True signals in a results dictionary.
+    EXCLUDES Squeeze from the count.
+    """
     count = 0
     
     if scan_type == 'bullish':
+        # Exclude Squeeze_1D and Squeeze_1W from count
         signal_keys = [
-            'FVG_1D', 'FVG_1W', 'FVG_1M',
-            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
             'OB_1D', 'OB_1W', 'OB_1M',
-            'Support',
+            'FVG_1D', 'FVG_1W', 'FVG_1M',
             'RevCand_1D', 'RevCand_1W', 'RevCand_1M',
-            'Squeeze_1D', 'Squeeze_1W'
+            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
+            'Support',
+            # Squeeze excluded from count
         ]
     else:  # bearish
         signal_keys = [
-            'FVG_1D', 'FVG_1W', 'FVG_1M',
-            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
             'OB_1D', 'OB_1W', 'OB_1M',
+            'FVG_1D', 'FVG_1W', 'FVG_1M',
+            'RevCand_1D', 'RevCand_1W', 'RevCand_1M',
+            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
             'Exhaustion',
-            'RevCand_1D', 'RevCand_1W', 'RevCand_1M'
         ]
     
     for key in signal_keys:
@@ -310,16 +314,16 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     results = {
         'Ticker': ticker,
         'Price': 0,
+        # Order Flow
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
         # FVG Breakouts
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
-        # iFVG Reversals
-        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Flow (removed 6M)
-        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
-        # Strong Support
-        'Support': False,
         # Reversal Candidates
         'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
+        # iFVG Reversals
+        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
+        # Strong Support
+        'Support': False,
         # Squeeze
         'Squeeze_1D': False, 'Squeeze_1W': False,
         # Track if any bullish signal found
@@ -351,7 +355,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         return results
 
     # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    # Order Flow only for 1D, 1W, 1M (removed 6M)
+    # Order Flow only for 1D, 1W, 1M
     for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
@@ -401,7 +405,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         results['Support'] = True
         results['has_signal'] = True
 
-    # 3. SQUEEZE
+    # 3. SQUEEZE (not counted towards signal_count for filtering)
     if not d_1d.empty:
         chop_series_d = MathWiz.calculate_choppiness(d_1d['High'], d_1d['Low'], d_1d['Close'])
         if not chop_series_d.empty and not pd.isna(chop_series_d.iloc[-1]):
@@ -440,7 +444,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             results['RevCand_1M'] = True
             results['has_signal'] = True
 
-    # Count total signals
+    # Count total signals (excluding Squeeze)
     results['signal_count'] = count_signals(results, 'bullish')
 
     return results
@@ -454,16 +458,16 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
     results = {
         'Ticker': ticker,
         'Price': 0,
+        # Order Flow
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
         # FVG Breakdowns
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
-        # iFVG Reversals
-        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Flow (removed 6M)
-        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
-        # Trend Reversal (Exhaustion)
-        'Exhaustion': False,
         # Reversal Candidates (Overbought)
         'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
+        # iFVG Reversals
+        'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
+        # Trend Reversal (Exhaustion)
+        'Exhaustion': False,
         # Track if any bearish signal found
         'has_signal': False,
         'signal_count': 0
@@ -493,7 +497,7 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
         return results
 
     # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    # Order Flow only for 1D, 1W, 1M (removed 6M)
+    # Order Flow only for 1D, 1W, 1M
     for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
@@ -573,12 +577,13 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
 def create_consolidated_table(results_list, is_macro=False, macro_names=None, scan_type='bullish'):
     """
     Creates a consolidated DataFrame with multi-level columns for display.
-    Only includes tickers with 2 or more signals.
+    Only includes tickers with 2 or more signals (excluding Squeeze).
+    Column order: Order Flow, FVG, Reversal Candidates, iFVG, Strong Support/Exhaustion, Squeeze
     """
     if not results_list:
         return None
     
-    # Filter only stocks with 2+ signals
+    # Filter only stocks with 2+ signals (Squeeze excluded from count)
     filtered = [r for r in results_list if r.get('signal_count', 0) >= 2]
     
     if not filtered:
@@ -599,25 +604,31 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
     empty = ""
     
     if scan_type == 'bullish':
-        # Build the display dataframe
+        # Build the display dataframe with new column order
         display_data = []
         for _, row in df.iterrows():
             display_row = {
                 ('Stock', 'Ticker'): row['Ticker'],
                 ('Stock', 'Price'): row['Price'],
-                ('FVG Breakouts', '1D'): check if row.get('FVG_1D') else empty,
-                ('FVG Breakouts', '1W'): check if row.get('FVG_1W') else empty,
-                ('FVG Breakouts', '1M'): check if row.get('FVG_1M') else empty,
-                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
-                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
-                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                # Order Flow first
                 ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
                 ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
                 ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
+                # FVG Breakouts second
+                ('FVG Breakouts', '1D'): check if row.get('FVG_1D') else empty,
+                ('FVG Breakouts', '1W'): check if row.get('FVG_1W') else empty,
+                ('FVG Breakouts', '1M'): check if row.get('FVG_1M') else empty,
+                # Reversal Candidates third
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
                 ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
+                # iFVG Reversals fourth
+                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
+                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
+                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                # Strong Support fifth
+                ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
+                # Squeeze last
                 ('Squeeze', '1D'): check if row.get('Squeeze_1D') else empty,
                 ('Squeeze', '1W'): check if row.get('Squeeze_1W') else empty,
             }
@@ -630,19 +641,24 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
             display_row = {
                 ('Stock', 'Ticker'): row['Ticker'],
                 ('Stock', 'Price'): row['Price'],
-                ('FVG Breakdowns', '1D'): check if row.get('FVG_1D') else empty,
-                ('FVG Breakdowns', '1W'): check if row.get('FVG_1W') else empty,
-                ('FVG Breakdowns', '1M'): check if row.get('FVG_1M') else empty,
-                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
-                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
-                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                # Order Flow first
                 ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
                 ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
                 ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
+                # FVG Breakdowns second
+                ('FVG Breakdowns', '1D'): check if row.get('FVG_1D') else empty,
+                ('FVG Breakdowns', '1W'): check if row.get('FVG_1W') else empty,
+                ('FVG Breakdowns', '1M'): check if row.get('FVG_1M') else empty,
+                # Reversal Candidates third
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
                 ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
+                # iFVG Reversals fourth
+                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
+                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
+                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
+                # Trend Exhaustion fifth
+                ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
             }
             if is_macro and macro_names:
                 display_row[('Stock', 'Name')] = row.get('Name', row['Ticker'])
@@ -656,21 +672,21 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
         if scan_type == 'bullish':
             col_order = [
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
-                ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
-                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
                 ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
-                ('Strong Support', '3M/6M/12M'),
+                ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
+                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
+                ('Strong Support', '3M/6M/12M'),
                 ('Squeeze', '1D'), ('Squeeze', '1W'),
             ]
         else:
             col_order = [
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
-                ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
-                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
                 ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
-                ('Trend Exhaustion', '1W'),
+                ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
+                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
+                ('Trend Exhaustion', '1W'),
             ]
         display_df = display_df[col_order]
     
@@ -742,12 +758,12 @@ def main():
             ### Ready to Scan: {market_name}
             
             **Available Scans:**
-            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Flow, Strong Support, Reversal Candidates, Squeeze
-            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Flow, Trend Exhaustion, Reversal Candidates
+            - 🐂 **Bullish:** Order Flow, FVG Breakouts, Reversal Candidates, iFVG Reversals, Strong Support, Squeeze
+            - 🐻 **Bearish:** Order Flow, FVG Breakdowns, Reversal Candidates, iFVG Reversals, Trend Exhaustion
             
             **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
             
-            **Note:** Only stocks with 2+ signals are displayed for higher conviction setups.
+            **Note:** Only stocks with 2+ signals (excluding Squeeze) are displayed for higher conviction setups.
             """)
         
         if tickers:
@@ -802,7 +818,7 @@ def main():
         
         # --- DISPLAY ---
         st.header("🐂 Bullish Scans")
-        st.caption("Stocks with 2+ bullish signals across multiple timeframes (higher conviction)")
+        st.caption("Stocks with 2+ bullish signals (excluding Squeeze) across multiple timeframes")
         
         if bull_table is not None and not bull_table.empty:
             st.dataframe(
@@ -817,7 +833,7 @@ def main():
         st.divider()
         
         st.header("🐻 Bearish Scans")
-        st.caption("Stocks with 2+ bearish signals across multiple timeframes (higher conviction)")
+        st.caption("Stocks with 2+ bearish signals across multiple timeframes")
         
         if bear_table is not None and not bear_table.empty:
             st.dataframe(
