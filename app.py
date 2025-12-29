@@ -17,13 +17,22 @@ st.markdown("""
     .stDataFrame { border: 1px solid #333; }
     h3 { border-bottom: 2px solid #333; padding-bottom: 10px; }
     
-    /* Style for the consolidated table */
-    .consolidated-table th {
-        text-align: center !important;
-        background-color: #1e2130 !important;
+    /* Compact table styling */
+    .stDataFrame [data-testid="stDataFrameResizable"] {
+        max-width: 100%;
     }
-    .consolidated-table td {
+    div[data-testid="stDataFrame"] > div {
+        overflow-x: auto;
+    }
+    .stDataFrame th {
+        white-space: nowrap !important;
+        font-size: 12px !important;
+        padding: 4px 8px !important;
+    }
+    .stDataFrame td {
         text-align: center !important;
+        padding: 4px 8px !important;
+        font-size: 13px !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -86,10 +95,6 @@ class MathWiz:
 
     @staticmethod
     def identify_strict_swings(df, neighbor_count=3):
-        """
-        Identifies peaks/valleys that are higher/lower than `neighbor_count` candles
-        to the left AND right.
-        """
         is_swing_high = pd.Series(True, index=df.index)
         is_swing_low = pd.Series(True, index=df.index)
         
@@ -109,30 +114,19 @@ class MathWiz:
     
     @staticmethod
     def check_ifvg_reversal(df):
-        """
-        Checks the specific 5-candle iFVG Reversal structure on the LATEST data.
-        Returns: 'Bull', 'Bear', or None
-        """
-        # Take last 5 candles and drop NaNs to ensure clean data
         subset = df.iloc[-5:].copy().dropna()
         if len(subset) < 5: return None
 
         c1 = subset.iloc[0]
         c3 = subset.iloc[2]
-        c5 = subset.iloc[4] # Current candle
+        c5 = subset.iloc[4]
         
-        # Bullish iFVG Scan:
-        # 1. Bearish FVG between C1 and C3 (Drop) -> C3 High < C1 Low
-        # 2. Bullish FVG between C3 and C5 (Pop)  -> C5 Low > C3 High
         is_bear_fvg_first = c3['High'] < c1['Low']
         is_bull_fvg_second = c5['Low'] > c3['High']
         
         if is_bear_fvg_first and is_bull_fvg_second:
             return 'Bull'
 
-        # Bearish iFVG Scan:
-        # 1. Bullish FVG between C1 and C3 (Pop)  -> C3 Low > C1 High
-        # 2. Bearish FVG between C3 and C5 (Drop) -> C5 High < C3 Low
         is_bull_fvg_first = c3['Low'] > c1['High']
         is_bear_fvg_second = c5['High'] < c3['Low']
         
@@ -166,34 +160,17 @@ class MathWiz:
 
     @staticmethod
     def check_consecutive_candles(df, num_candles):
-        """
-        Checks for consecutive red or green candles at the end of the dataframe.
-        
-        Args:
-            df: DataFrame with OHLC data
-            num_candles: Number of consecutive candles to check
-            
-        Returns:
-            'Bull' if num_candles consecutive red candles (bullish reversal potential)
-            'Bear' if num_candles consecutive green candles (bearish reversal potential)
-            None if neither condition is met
-        """
         if len(df) < num_candles:
             return None
         
-        # Get the last num_candles
         recent = df.iloc[-num_candles:]
-        
-        # Check if all candles are red (Close < Open)
         all_red = all(recent['Close'] < recent['Open'])
-        
-        # Check if all candles are green (Close > Open)
         all_green = all(recent['Close'] > recent['Open'])
         
         if all_red:
-            return 'Bull'  # Consecutive red = bullish reversal potential
+            return 'Bull'
         elif all_green:
-            return 'Bear'  # Consecutive green = bearish reversal potential
+            return 'Bear'
         
         return None
 
@@ -215,7 +192,6 @@ def load_tickers(market_choice):
     try:
         df = pd.read_csv(filename)
         
-        # For macro tickers, return the Ticker column directly
         if "Macro" in market_choice:
             return df['Ticker'].tolist()
         
@@ -228,7 +204,6 @@ def load_tickers(market_choice):
 
 @st.cache_data
 def load_macro_metadata():
-    """Load macro ticker metadata for display purposes"""
     filename = "macro_tickers.csv"
     if not os.path.exists(filename):
         return {}
@@ -252,7 +227,6 @@ def resample_custom(df, timeframe):
         if timeframe == "1W": return df.resample("W-FRI").agg(agg_dict).dropna()
         if timeframe == "1M": return df.resample("ME").agg(agg_dict).dropna()
 
-        # Long Term Strict
         df_monthly = df.resample('MS').agg(agg_dict).dropna()
         if timeframe == "3M": return df_monthly.resample('QE').agg(agg_dict).dropna()
         if timeframe == "6M":
@@ -273,37 +247,48 @@ def resample_custom(df, timeframe):
 # 5. PARALLEL ANALYSIS ENGINE
 # ==========================================
 
-def count_signals(results, scan_type='bullish'):
+def count_active_scanners(results, scan_type='bullish'):
     """
-    Count the number of True signals in a results dictionary.
-    EXCLUDES Squeeze from the count.
+    Count how many DIFFERENT scanners have at least one True signal.
+    Excludes Squeeze from the count.
     """
-    count = 0
+    scanners_with_signals = set()
     
     if scan_type == 'bullish':
-        # Exclude Squeeze_1D and Squeeze_1W from count
-        signal_keys = [
-            'OB_1D', 'OB_1W', 'OB_1M',
-            'FVG_1D', 'FVG_1W', 'FVG_1M',
-            'RevCand_1D', 'RevCand_1W', 'RevCand_1M',
-            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
-            'Support',
-            # Squeeze excluded from count
-        ]
+        # Order Flow scanner
+        if results.get('OB_1D') or results.get('OB_1W') or results.get('OB_1M'):
+            scanners_with_signals.add('OB')
+        # FVG scanner
+        if results.get('FVG_1D') or results.get('FVG_1W') or results.get('FVG_1M'):
+            scanners_with_signals.add('FVG')
+        # Reversal Candidates scanner
+        if results.get('RevCand_1D') or results.get('RevCand_1W') or results.get('RevCand_1M'):
+            scanners_with_signals.add('RevCand')
+        # iFVG scanner
+        if results.get('iFVG_1D') or results.get('iFVG_1W') or results.get('iFVG_1M'):
+            scanners_with_signals.add('iFVG')
+        # Strong Support scanner
+        if results.get('Support'):
+            scanners_with_signals.add('Support')
+        # Squeeze excluded from count
     else:  # bearish
-        signal_keys = [
-            'OB_1D', 'OB_1W', 'OB_1M',
-            'FVG_1D', 'FVG_1W', 'FVG_1M',
-            'RevCand_1D', 'RevCand_1W', 'RevCand_1M',
-            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
-            'Exhaustion',
-        ]
+        # Order Flow scanner
+        if results.get('OB_1D') or results.get('OB_1W') or results.get('OB_1M'):
+            scanners_with_signals.add('OB')
+        # FVG scanner
+        if results.get('FVG_1D') or results.get('FVG_1W') or results.get('FVG_1M'):
+            scanners_with_signals.add('FVG')
+        # Reversal Candidates scanner
+        if results.get('RevCand_1D') or results.get('RevCand_1W') or results.get('RevCand_1M'):
+            scanners_with_signals.add('RevCand')
+        # iFVG scanner
+        if results.get('iFVG_1D') or results.get('iFVG_1W') or results.get('iFVG_1M'):
+            scanners_with_signals.add('iFVG')
+        # Exhaustion scanner
+        if results.get('Exhaustion'):
+            scanners_with_signals.add('Exhaustion')
     
-    for key in signal_keys:
-        if results.get(key, False):
-            count += 1
-    
-    return count
+    return len(scanners_with_signals)
 
 
 def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
@@ -326,17 +311,14 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         'Support': False,
         # Squeeze
         'Squeeze_1D': False, 'Squeeze_1W': False,
-        # Track if any bullish signal found
+        # Track signals
         'has_signal': False,
-        'signal_count': 0
+        'scanner_count': 0
     }
     
     try:
-        # 1D, 1W from Daily Data
         d_1d = resample_custom(df_daily_raw, "1D")
         d_1w = resample_custom(df_daily_raw, "1W")
-        
-        # 1M, 3M, 6M, 12M from Monthly Data
         d_1m = resample_custom(df_monthly_raw, "1M")
         d_3m = resample_custom(df_monthly_raw, "3M")
         d_6m = resample_custom(df_monthly_raw, "6M")
@@ -347,28 +329,23 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             "3M": d_3m, "6M": d_6m, "12M": d_12m
         }
         
-        # Set price from daily data
         if not d_1d.empty:
             results['Price'] = round(d_1d['Close'].iloc[-1], 2)
         
     except: 
         return results
 
-    # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    # Order Flow only for 1D, 1W, 1M
     for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
         df = data_map[tf].copy() 
-        
-        # Run Standard FVG/Swing Logic
         df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
         df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
         
         curr = df.iloc[-1]
         prev = df.iloc[-2]
 
-        # --- A. SNIPER FVG ENTRIES ---
+        # FVG ENTRIES
         if curr['Bull_FVG']:
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
@@ -377,25 +354,23 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
                     results[f'FVG_{tf}'] = True
                     results['has_signal'] = True
 
-        # --- B. Order Flow ---
+        # Order Flow
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
-            
-            # Bullish OB
             if (c_anc['Close'] < c_anc['Open'] and 
                 c1['Close'] > c1['Open'] and c2['Close'] > c2['Open'] and c3['Close'] > c3['Open']):
                 if c3['Low'] > c1['High'] and c3['Close'] > c_anc['High']:
                     results[f'OB_{tf}'] = True
                     results['has_signal'] = True
         
-        # --- C. iFVG REVERSALS ---
+        # iFVG REVERSALS
         ifvg_status = MathWiz.check_ifvg_reversal(df)
         if ifvg_status == "Bull":
             results[f'iFVG_{tf}'] = True
             results['has_signal'] = True
 
-    # 2. STRONG SUPPORT
+    # STRONG SUPPORT
     sup_tf = []
     if MathWiz.find_unmitigated_fvg_zone(d_3m): sup_tf.append("3M")
     if MathWiz.find_unmitigated_fvg_zone(d_6m): sup_tf.append("6M")
@@ -405,47 +380,39 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         results['Support'] = True
         results['has_signal'] = True
 
-    # 3. SQUEEZE (not counted towards signal_count for filtering)
+    # SQUEEZE
     if not d_1d.empty:
         chop_series_d = MathWiz.calculate_choppiness(d_1d['High'], d_1d['Low'], d_1d['Close'])
         if not chop_series_d.empty and not pd.isna(chop_series_d.iloc[-1]):
-            chop_d = chop_series_d.iloc[-1]
-            if chop_d > 59:
+            if chop_series_d.iloc[-1] > 59:
                 results['Squeeze_1D'] = True
                 results['has_signal'] = True
                 
     if not d_1w.empty:
         chop_series_w = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
         if not chop_series_w.empty and not pd.isna(chop_series_w.iloc[-1]):
-            chop_w = chop_series_w.iloc[-1]
-            if chop_w > 59:
+            if chop_series_w.iloc[-1] > 59:
                 results['Squeeze_1W'] = True
                 results['has_signal'] = True
 
-    # 4. REVERSAL CANDIDATES (Consecutive Candle Scan)
-    # 1D: 5+ consecutive red candles
+    # REVERSAL CANDIDATES
     if not d_1d.empty and len(d_1d) >= 5:
-        rev_1d = MathWiz.check_consecutive_candles(d_1d, 5)
-        if rev_1d == 'Bull':
+        if MathWiz.check_consecutive_candles(d_1d, 5) == 'Bull':
             results['RevCand_1D'] = True
             results['has_signal'] = True
     
-    # 1W: 4+ consecutive red candles
     if not d_1w.empty and len(d_1w) >= 4:
-        rev_1w = MathWiz.check_consecutive_candles(d_1w, 4)
-        if rev_1w == 'Bull':
+        if MathWiz.check_consecutive_candles(d_1w, 4) == 'Bull':
             results['RevCand_1W'] = True
             results['has_signal'] = True
     
-    # 1M: 3+ consecutive red candles
     if not d_1m.empty and len(d_1m) >= 3:
-        rev_1m = MathWiz.check_consecutive_candles(d_1m, 3)
-        if rev_1m == 'Bull':
+        if MathWiz.check_consecutive_candles(d_1m, 3) == 'Bull':
             results['RevCand_1M'] = True
             results['has_signal'] = True
 
-    # Count total signals (excluding Squeeze)
-    results['signal_count'] = count_signals(results, 'bullish')
+    # Count active scanners (excluding Squeeze)
+    results['scanner_count'] = count_active_scanners(results, 'bullish')
 
     return results
 
@@ -453,64 +420,46 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
 def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
     """
     Runs ALL BEARISH scans for ONE ticker in a single pass.
-    Returns a dictionary with ticker info and all scan results.
     """
     results = {
         'Ticker': ticker,
         'Price': 0,
-        # Order Flow
         'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
-        # FVG Breakdowns
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
-        # Reversal Candidates (Overbought)
         'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
-        # iFVG Reversals
         'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Trend Reversal (Exhaustion)
         'Exhaustion': False,
-        # Track if any bearish signal found
         'has_signal': False,
-        'signal_count': 0
+        'scanner_count': 0
     }
     
     try:
-        # 1D, 1W from Daily Data
         d_1d = resample_custom(df_daily_raw, "1D")
         d_1w = resample_custom(df_daily_raw, "1W")
-        
-        # 1M, 3M, 6M, 12M from Monthly Data
         d_1m = resample_custom(df_monthly_raw, "1M")
         d_3m = resample_custom(df_monthly_raw, "3M")
         d_6m = resample_custom(df_monthly_raw, "6M")
         d_12m = resample_custom(df_monthly_raw, "12M")
         
-        data_map = {
-            "1D": d_1d, "1W": d_1w, "1M": d_1m, 
-            "3M": d_3m, "6M": d_6m, "12M": d_12m
-        }
+        data_map = {"1D": d_1d, "1W": d_1w, "1M": d_1m, "3M": d_3m, "6M": d_6m, "12M": d_12m}
         
-        # Set price from daily data
         if not d_1d.empty:
             results['Price'] = round(d_1d['Close'].iloc[-1], 2)
         
     except: 
         return results
 
-    # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    # Order Flow only for 1D, 1W, 1M
     for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
         df = data_map[tf].copy() 
-        
-        # Run Standard FVG/Swing Logic
         df['Bull_FVG'], df['Bear_FVG'] = MathWiz.find_fvg(df)
         df['Is_Swing_High'], df['Is_Swing_Low'] = MathWiz.identify_strict_swings(df)
         
         curr = df.iloc[-1]
         prev = df.iloc[-2]
 
-        # --- A. SNIPER FVG BREAKDOWNS ---
+        # FVG BREAKDOWNS
         if curr['Bear_FVG']:
             past_swings = df[df['Is_Swing_Low']]
             if not past_swings.empty:
@@ -519,176 +468,155 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
                     results[f'FVG_{tf}'] = True
                     results['has_signal'] = True
 
-        # --- B. Order Flow (Bearish) ---
+        # Order Flow (Bearish)
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
-            
-            # Bearish OB
             if (c_anc['Close'] > c_anc['Open'] and 
                 c1['Close'] < c1['Open'] and c2['Close'] < c2['Open'] and c3['Close'] < c3['Open']):
                 if c3['High'] < c1['Low'] and c3['Close'] < c_anc['Low']:
                     results[f'OB_{tf}'] = True
                     results['has_signal'] = True
         
-        # --- C. iFVG REVERSALS ---
+        # iFVG REVERSALS
         ifvg_status = MathWiz.check_ifvg_reversal(df)
         if ifvg_status == "Bear":
             results[f'iFVG_{tf}'] = True
             results['has_signal'] = True
 
-    # 2. TREND REVERSAL (Exhaustion) - Weekly Chop < 25
+    # EXHAUSTION
     if not d_1w.empty:
         chop_series = MathWiz.calculate_choppiness(d_1w['High'], d_1w['Low'], d_1w['Close'])
         if not chop_series.empty and not pd.isna(chop_series.iloc[-1]):
-            chop_w = chop_series.iloc[-1]
-            if chop_w < 25:
+            if chop_series.iloc[-1] < 25:
                 results['Exhaustion'] = True
                 results['has_signal'] = True
 
-    # 3. REVERSAL CANDIDATES (Consecutive Green Candles - Overbought)
-    # 1D: 5+ consecutive green candles
+    # REVERSAL CANDIDATES (Overbought)
     if not d_1d.empty and len(d_1d) >= 5:
-        rev_1d = MathWiz.check_consecutive_candles(d_1d, 5)
-        if rev_1d == 'Bear':
+        if MathWiz.check_consecutive_candles(d_1d, 5) == 'Bear':
             results['RevCand_1D'] = True
             results['has_signal'] = True
     
-    # 1W: 4+ consecutive green candles
     if not d_1w.empty and len(d_1w) >= 4:
-        rev_1w = MathWiz.check_consecutive_candles(d_1w, 4)
-        if rev_1w == 'Bear':
+        if MathWiz.check_consecutive_candles(d_1w, 4) == 'Bear':
             results['RevCand_1W'] = True
             results['has_signal'] = True
     
-    # 1M: 3+ consecutive green candles
     if not d_1m.empty and len(d_1m) >= 3:
-        rev_1m = MathWiz.check_consecutive_candles(d_1m, 3)
-        if rev_1m == 'Bear':
+        if MathWiz.check_consecutive_candles(d_1m, 3) == 'Bear':
             results['RevCand_1M'] = True
             results['has_signal'] = True
 
-    # Count total signals
-    results['signal_count'] = count_signals(results, 'bearish')
+    results['scanner_count'] = count_active_scanners(results, 'bearish')
 
     return results
 
 
 def create_consolidated_table(results_list, is_macro=False, macro_names=None, scan_type='bullish'):
     """
-    Creates a consolidated DataFrame with multi-level columns for display.
-    Only includes tickers with 2 or more signals (excluding Squeeze).
-    Column order: Order Flow, FVG, Reversal Candidates, iFVG, Strong Support/Exhaustion, Squeeze
+    Creates a consolidated DataFrame with timeframes as main columns and scanners as sub-columns.
+    Only includes tickers with signals from 2+ DIFFERENT scanners (excluding Squeeze).
     """
     if not results_list:
         return None
     
-    # Filter only stocks with 2+ signals (Squeeze excluded from count)
-    filtered = [r for r in results_list if r.get('signal_count', 0) >= 2]
+    # Filter: must have signals from 2+ different scanners
+    filtered = [r for r in results_list if r.get('scanner_count', 0) >= 2]
     
     if not filtered:
         return None
     
-    # Sort by signal count descending
-    filtered = sorted(filtered, key=lambda x: x.get('signal_count', 0), reverse=True)
-    
-    # Create base dataframe
+    filtered = sorted(filtered, key=lambda x: x.get('scanner_count', 0), reverse=True)
     df = pd.DataFrame(filtered)
     
-    # Add Name column for macro
     if is_macro and macro_names:
         df['Name'] = df['Ticker'].map(macro_names).fillna(df['Ticker'])
     
-    # Convert boolean to checkmark
     check = "✅"
     empty = ""
     
     if scan_type == 'bullish':
-        # Build the display dataframe with new column order
         display_data = []
         for _, row in df.iterrows():
             display_row = {
-                ('Stock', 'Ticker'): row['Ticker'],
-                ('Stock', 'Price'): row['Price'],
-                # Order Flow first
-                ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
-                ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
-                ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                # FVG Breakouts second
-                ('FVG Breakouts', '1D'): check if row.get('FVG_1D') else empty,
-                ('FVG Breakouts', '1W'): check if row.get('FVG_1W') else empty,
-                ('FVG Breakouts', '1M'): check if row.get('FVG_1M') else empty,
-                # Reversal Candidates third
-                ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
-                ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
-                ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
-                # iFVG Reversals fourth
-                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
-                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
-                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
-                # Strong Support fifth
-                ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
-                # Squeeze last
-                ('Squeeze', '1D'): check if row.get('Squeeze_1D') else empty,
-                ('Squeeze', '1W'): check if row.get('Squeeze_1W') else empty,
+                ('Info', 'Ticker'): row['Ticker'],
+                ('Info', 'Price'): row['Price'],
+                # 1D timeframe
+                ('1D', 'OB'): check if row.get('OB_1D') else empty,
+                ('1D', 'FVG'): check if row.get('FVG_1D') else empty,
+                ('1D', 'Rev'): check if row.get('RevCand_1D') else empty,
+                ('1D', 'iFVG'): check if row.get('iFVG_1D') else empty,
+                ('1D', 'Sqz'): check if row.get('Squeeze_1D') else empty,
+                # 1W timeframe
+                ('1W', 'OB'): check if row.get('OB_1W') else empty,
+                ('1W', 'FVG'): check if row.get('FVG_1W') else empty,
+                ('1W', 'Rev'): check if row.get('RevCand_1W') else empty,
+                ('1W', 'iFVG'): check if row.get('iFVG_1W') else empty,
+                ('1W', 'Sqz'): check if row.get('Squeeze_1W') else empty,
+                # 1M timeframe
+                ('1M', 'OB'): check if row.get('OB_1M') else empty,
+                ('1M', 'FVG'): check if row.get('FVG_1M') else empty,
+                ('1M', 'Rev'): check if row.get('RevCand_1M') else empty,
+                ('1M', 'iFVG'): check if row.get('iFVG_1M') else empty,
+                # Long-term
+                ('LT', 'Sup'): check if row.get('Support') else empty,
             }
             if is_macro and macro_names:
-                display_row[('Stock', 'Name')] = row.get('Name', row['Ticker'])
+                display_row[('Info', 'Name')] = row.get('Name', row['Ticker'])
             display_data.append(display_row)
+            
+        display_df = pd.DataFrame(display_data)
+        display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
+        
+        if is_macro and macro_names:
+            col_order = [
+                ('Info', 'Ticker'), ('Info', 'Name'), ('Info', 'Price'),
+                ('1D', 'OB'), ('1D', 'FVG'), ('1D', 'Rev'), ('1D', 'iFVG'), ('1D', 'Sqz'),
+                ('1W', 'OB'), ('1W', 'FVG'), ('1W', 'Rev'), ('1W', 'iFVG'), ('1W', 'Sqz'),
+                ('1M', 'OB'), ('1M', 'FVG'), ('1M', 'Rev'), ('1M', 'iFVG'),
+                ('LT', 'Sup'),
+            ]
+            display_df = display_df[col_order]
+            
     else:  # bearish
         display_data = []
         for _, row in df.iterrows():
             display_row = {
-                ('Stock', 'Ticker'): row['Ticker'],
-                ('Stock', 'Price'): row['Price'],
-                # Order Flow first
-                ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
-                ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
-                ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                # FVG Breakdowns second
-                ('FVG Breakdowns', '1D'): check if row.get('FVG_1D') else empty,
-                ('FVG Breakdowns', '1W'): check if row.get('FVG_1W') else empty,
-                ('FVG Breakdowns', '1M'): check if row.get('FVG_1M') else empty,
-                # Reversal Candidates third
-                ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
-                ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
-                ('Reversal Candidates', '1M'): check if row.get('RevCand_1M') else empty,
-                # iFVG Reversals fourth
-                ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
-                ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
-                ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
-                # Trend Exhaustion fifth
-                ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
+                ('Info', 'Ticker'): row['Ticker'],
+                ('Info', 'Price'): row['Price'],
+                # 1D timeframe
+                ('1D', 'OB'): check if row.get('OB_1D') else empty,
+                ('1D', 'FVG'): check if row.get('FVG_1D') else empty,
+                ('1D', 'Rev'): check if row.get('RevCand_1D') else empty,
+                ('1D', 'iFVG'): check if row.get('iFVG_1D') else empty,
+                # 1W timeframe
+                ('1W', 'OB'): check if row.get('OB_1W') else empty,
+                ('1W', 'FVG'): check if row.get('FVG_1W') else empty,
+                ('1W', 'Rev'): check if row.get('RevCand_1W') else empty,
+                ('1W', 'iFVG'): check if row.get('iFVG_1W') else empty,
+                ('1W', 'Exh'): check if row.get('Exhaustion') else empty,
+                # 1M timeframe
+                ('1M', 'OB'): check if row.get('OB_1M') else empty,
+                ('1M', 'FVG'): check if row.get('FVG_1M') else empty,
+                ('1M', 'Rev'): check if row.get('RevCand_1M') else empty,
+                ('1M', 'iFVG'): check if row.get('iFVG_1M') else empty,
             }
             if is_macro and macro_names:
-                display_row[('Stock', 'Name')] = row.get('Name', row['Ticker'])
+                display_row[('Info', 'Name')] = row.get('Name', row['Ticker'])
             display_data.append(display_row)
-    
-    display_df = pd.DataFrame(display_data)
-    display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
-    
-    # Reorder columns to put Name after Ticker if macro
-    if is_macro and macro_names:
-        if scan_type == 'bullish':
+            
+        display_df = pd.DataFrame(display_data)
+        display_df.columns = pd.MultiIndex.from_tuples(display_df.columns)
+        
+        if is_macro and macro_names:
             col_order = [
-                ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
-                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
-                ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
-                ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
-                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Strong Support', '3M/6M/12M'),
-                ('Squeeze', '1D'), ('Squeeze', '1W'),
+                ('Info', 'Ticker'), ('Info', 'Name'), ('Info', 'Price'),
+                ('1D', 'OB'), ('1D', 'FVG'), ('1D', 'Rev'), ('1D', 'iFVG'),
+                ('1W', 'OB'), ('1W', 'FVG'), ('1W', 'Rev'), ('1W', 'iFVG'), ('1W', 'Exh'),
+                ('1M', 'OB'), ('1M', 'FVG'), ('1M', 'Rev'), ('1M', 'iFVG'),
             ]
-        else:
-            col_order = [
-                ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
-                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
-                ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
-                ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
-                ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Trend Exhaustion', '1W'),
-            ]
-        display_df = display_df[col_order]
+            display_df = display_df[col_order]
     
     return display_df
 
@@ -706,7 +634,6 @@ def main():
         st.cache_data.clear()
         st.session_state.init_done = True
     
-    # Initialize scan state
     if 'scan_triggered' not in st.session_state:
         st.session_state.scan_triggered = False
         
@@ -720,7 +647,6 @@ def main():
     tickers = load_tickers(market)
     macro_names = load_macro_metadata() if is_macro else {}
     
-    # Sidebar buttons
     col_scan, col_refresh = st.sidebar.columns(2)
     with col_scan:
         if st.button("🎯 Run Scan", type="primary", use_container_width=True):
@@ -731,11 +657,22 @@ def main():
             st.session_state.scan_triggered = False
             st.rerun()
 
-    # Show welcome message if scan not triggered
+    # Legend in sidebar
+    st.sidebar.divider()
+    st.sidebar.subheader("📖 Legend")
+    st.sidebar.markdown("""
+    **OB** = Order Flow  
+    **FVG** = Fair Value Gap  
+    **Rev** = Reversal Candidate  
+    **iFVG** = Inverse FVG  
+    **Sqz** = Squeeze  
+    **Sup** = Strong Support  
+    **Exh** = Trend Exhaustion
+    """)
+
     if not st.session_state.scan_triggered:
         st.info("👋 Welcome! Select a market and click **🎯 Run Scan** to analyze stocks.")
         
-        # Show market info
         if is_macro:
             market_name = "Macro Scanner"
             st.markdown(f"""
@@ -749,28 +686,23 @@ def main():
             - 💱 **Currencies:** USD/INR, CAD/INR, USD/CAD, EUR/USD, DXY
             - ₿ **Crypto:** Bitcoin, Ethereum, XRP
             - 📊 **Bonds:** US 10Y, US 30Y Treasury Yields
-            
-            **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
             """)
         else:
             market_name = "Nasdaq 100" if "US" in market else "Nifty 200"
             st.markdown(f"""
             ### Ready to Scan: {market_name}
             
-            **Available Scans:**
-            - 🐂 **Bullish:** Order Flow, FVG Breakouts, Reversal Candidates, iFVG Reversals, Strong Support, Squeeze
-            - 🐻 **Bearish:** Order Flow, FVG Breakdowns, Reversal Candidates, iFVG Reversals, Trend Exhaustion
+            **Scan Types:** Order Flow, FVG, Reversal Candidates, iFVG, Strong Support, Squeeze
             
-            **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
+            **Timeframes:** 1D, 1W, 1M (Long-term for Support)
             
-            **Note:** Only stocks with 2+ signals (excluding Squeeze) are displayed for higher conviction setups.
+            **Filter:** Only shows stocks with signals from 2+ different scan types
             """)
         
         if tickers:
             st.caption(f"📊 {len(tickers)} {'assets' if is_macro else 'stocks'} loaded and ready to scan")
         return
 
-    # Run scan only when triggered
     if tickers and st.session_state.scan_triggered:
         with st.status("🚀 Running Parallel Scans...", expanded=True) as status:
             
@@ -812,58 +744,55 @@ def main():
             
             status.update(label="✅ Analysis Complete", state="complete", expanded=False)
 
-        # Create consolidated tables
         bull_table = create_consolidated_table(bullish_results, is_macro, macro_names, 'bullish')
         bear_table = create_consolidated_table(bearish_results, is_macro, macro_names, 'bearish')
         
-        # --- DISPLAY ---
         st.header("🐂 Bullish Scans")
-        st.caption("Stocks with 2+ bullish signals (excluding Squeeze) across multiple timeframes")
+        st.caption("Stocks with signals from 2+ different scan types (cross-scanner confluence)")
         
         if bull_table is not None and not bull_table.empty:
             st.dataframe(
                 bull_table,
                 hide_index=True,
                 use_container_width=True,
-                height=min(len(bull_table) * 35 + 60, 600)
+                height=min(len(bull_table) * 35 + 60, 500)
             )
         else:
-            st.info("No stocks found with 2+ bullish signals.")
+            st.info("No stocks found with cross-scanner confluence.")
         
         st.divider()
         
         st.header("🐻 Bearish Scans")
-        st.caption("Stocks with 2+ bearish signals across multiple timeframes")
+        st.caption("Stocks with signals from 2+ different scan types (cross-scanner confluence)")
         
         if bear_table is not None and not bear_table.empty:
             st.dataframe(
                 bear_table,
                 hide_index=True,
                 use_container_width=True,
-                height=min(len(bear_table) * 35 + 60, 600)
+                height=min(len(bear_table) * 35 + 60, 500)
             )
         else:
-            st.info("No stocks found with 2+ bearish signals.")
+            st.info("No stocks found with cross-scanner confluence.")
         
-        # Summary stats
         st.divider()
         st.subheader("📊 Scan Summary")
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            bull_count = len([r for r in bullish_results if r.get('signal_count', 0) >= 2])
-            st.metric("Bullish (2+ signals)", bull_count)
+            bull_count = len([r for r in bullish_results if r.get('scanner_count', 0) >= 2])
+            st.metric("Bullish Confluence", bull_count)
         
         with col2:
-            bear_count = len([r for r in bearish_results if r.get('signal_count', 0) >= 2])
-            st.metric("Bearish (2+ signals)", bear_count)
+            bear_count = len([r for r in bearish_results if r.get('scanner_count', 0) >= 2])
+            st.metric("Bearish Confluence", bear_count)
         
         with col3:
             total_signals = len([r for r in bullish_results if r.get('has_signal')]) + len([r for r in bearish_results if r.get('has_signal')])
-            st.metric("Total Signals Found", total_signals)
+            st.metric("Total Signals", total_signals)
         
         with col4:
-            st.metric("Total Scanned", len(tickers))
+            st.metric("Scanned", len(tickers))
 
 if __name__ == "__main__":
     main()
