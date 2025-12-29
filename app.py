@@ -285,7 +285,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
         # iFVG Reversals
         'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Blocks
+        # Order Flow
         'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
         # Strong Support
         'Support': False,
@@ -320,7 +320,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     except: 
         return results
 
-    # 1. FVG & ORDER BLOCKS & iFVG (Iterate Timeframes)
+    # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
@@ -342,7 +342,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
                     results[f'FVG_{tf}'] = True
                     results['has_signal'] = True
 
-        # --- B. ORDER BLOCKS ---
+        # --- B. Order Flow ---
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
@@ -425,7 +425,7 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
         # iFVG Reversals
         'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Blocks
+        # Order Flow
         'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
         # Trend Reversal (Exhaustion)
         'Exhaustion': False,
@@ -458,7 +458,7 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
     except: 
         return results
 
-    # 1. FVG & ORDER BLOCKS & iFVG (Iterate Timeframes)
+    # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
     for tf in ["1D", "1W", "1M", "6M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
@@ -480,7 +480,7 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
                     results[f'FVG_{tf}'] = True
                     results['has_signal'] = True
 
-        # --- B. ORDER BLOCKS (Bearish) ---
+        # --- B. Order Flow (Bearish) ---
         subset = df.iloc[-4:].copy()
         if len(subset) == 4:
             c_anc, c1, c2, c3 = subset.iloc[0], subset.iloc[1], subset.iloc[2], subset.iloc[3]
@@ -570,10 +570,10 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
                 ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
                 ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
-                ('Order Blocks', '1D'): check if row.get('OB_1D') else empty,
-                ('Order Blocks', '1W'): check if row.get('OB_1W') else empty,
-                ('Order Blocks', '1M'): check if row.get('OB_1M') else empty,
-                ('Order Blocks', '6M'): check if row.get('OB_6M') else empty,
+                ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
+                ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
+                ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
+                ('Order Flow', '6M'): check if row.get('OB_6M') else empty,
                 ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
@@ -596,10 +596,10 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('iFVG Reversals', '1D'): check if row.get('iFVG_1D') else empty,
                 ('iFVG Reversals', '1W'): check if row.get('iFVG_1W') else empty,
                 ('iFVG Reversals', '1M'): check if row.get('iFVG_1M') else empty,
-                ('Order Blocks', '1D'): check if row.get('OB_1D') else empty,
-                ('Order Blocks', '1W'): check if row.get('OB_1W') else empty,
-                ('Order Blocks', '1M'): check if row.get('OB_1M') else empty,
-                ('Order Blocks', '6M'): check if row.get('OB_6M') else empty,
+                ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
+                ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
+                ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
+                ('Order Flow', '6M'): check if row.get('OB_6M') else empty,
                 ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
@@ -619,7 +619,7 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
                 ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
                 ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Order Blocks', '1D'), ('Order Blocks', '1W'), ('Order Blocks', '1M'), ('Order Blocks', '6M'),
+                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'), ('Order Flow', '6M'),
                 ('Strong Support', '3M/6M/12M'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
                 ('Squeeze', '1D'), ('Squeeze', '1W'),
@@ -629,7 +629,7 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
                 ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
                 ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Order Blocks', '1D'), ('Order Blocks', '1W'), ('Order Blocks', '1M'), ('Order Blocks', '6M'),
+                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'), ('Order Flow', '6M'),
                 ('Trend Exhaustion', '1W'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
             ]
@@ -703,8 +703,8 @@ def main():
             ### Ready to Scan: {market_name}
             
             **Available Scans:**
-            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Blocks, Strong Support, Reversal Candidates, Squeeze
-            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Blocks, Trend Exhaustion, Reversal Candidates
+            - 🐂 **Bullish:** FVG Breakouts, iFVG Reversals, Order Flow, Strong Support, Reversal Candidates, Squeeze
+            - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Flow, Trend Exhaustion, Reversal Candidates
             
             **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
             """)
@@ -805,4 +805,5 @@ def main():
             st.metric("Total Scanned", len(tickers))
 
 if __name__ == "__main__":
+
     main()
