@@ -273,6 +273,35 @@ def resample_custom(df, timeframe):
 # 5. PARALLEL ANALYSIS ENGINE
 # ==========================================
 
+def count_signals(results, scan_type='bullish'):
+    """Count the number of True signals in a results dictionary."""
+    count = 0
+    
+    if scan_type == 'bullish':
+        signal_keys = [
+            'FVG_1D', 'FVG_1W', 'FVG_1M',
+            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
+            'OB_1D', 'OB_1W', 'OB_1M',
+            'Support',
+            'RevCand_1D', 'RevCand_1W', 'RevCand_1M',
+            'Squeeze_1D', 'Squeeze_1W'
+        ]
+    else:  # bearish
+        signal_keys = [
+            'FVG_1D', 'FVG_1W', 'FVG_1M',
+            'iFVG_1D', 'iFVG_1W', 'iFVG_1M',
+            'OB_1D', 'OB_1W', 'OB_1M',
+            'Exhaustion',
+            'RevCand_1D', 'RevCand_1W', 'RevCand_1M'
+        ]
+    
+    for key in signal_keys:
+        if results.get(key, False):
+            count += 1
+    
+    return count
+
+
 def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
     """
     Runs ALL scans for ONE ticker in a single pass.
@@ -285,8 +314,8 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
         # iFVG Reversals
         'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Flow
-        'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
+        # Order Flow (removed 6M)
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
         # Strong Support
         'Support': False,
         # Reversal Candidates
@@ -294,7 +323,8 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         # Squeeze
         'Squeeze_1D': False, 'Squeeze_1W': False,
         # Track if any bullish signal found
-        'has_signal': False
+        'has_signal': False,
+        'signal_count': 0
     }
     
     try:
@@ -321,7 +351,8 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         return results
 
     # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    for tf in ["1D", "1W", "1M", "6M"]:
+    # Order Flow only for 1D, 1W, 1M (removed 6M)
+    for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
         df = data_map[tf].copy() 
@@ -334,7 +365,7 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
         prev = df.iloc[-2]
 
         # --- A. SNIPER FVG ENTRIES ---
-        if curr['Bull_FVG'] and tf in ["1D", "1W", "1M"]:
+        if curr['Bull_FVG']:
             past_swings = df[df['Is_Swing_High']]
             if not past_swings.empty:
                 last_swing_high = past_swings['High'].iloc[-1]
@@ -354,12 +385,11 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
                     results[f'OB_{tf}'] = True
                     results['has_signal'] = True
         
-        # --- C. iFVG REVERSALS (1D, 1W, 1M only) ---
-        if tf in ["1D", "1W", "1M"]:
-            ifvg_status = MathWiz.check_ifvg_reversal(df)
-            if ifvg_status == "Bull":
-                results[f'iFVG_{tf}'] = True
-                results['has_signal'] = True
+        # --- C. iFVG REVERSALS ---
+        ifvg_status = MathWiz.check_ifvg_reversal(df)
+        if ifvg_status == "Bull":
+            results[f'iFVG_{tf}'] = True
+            results['has_signal'] = True
 
     # 2. STRONG SUPPORT
     sup_tf = []
@@ -410,6 +440,9 @@ def analyze_ticker(ticker, df_daily_raw, df_monthly_raw):
             results['RevCand_1M'] = True
             results['has_signal'] = True
 
+    # Count total signals
+    results['signal_count'] = count_signals(results, 'bullish')
+
     return results
 
 
@@ -425,14 +458,15 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
         'FVG_1D': False, 'FVG_1W': False, 'FVG_1M': False,
         # iFVG Reversals
         'iFVG_1D': False, 'iFVG_1W': False, 'iFVG_1M': False,
-        # Order Flow
-        'OB_1D': False, 'OB_1W': False, 'OB_1M': False, 'OB_6M': False,
+        # Order Flow (removed 6M)
+        'OB_1D': False, 'OB_1W': False, 'OB_1M': False,
         # Trend Reversal (Exhaustion)
         'Exhaustion': False,
         # Reversal Candidates (Overbought)
         'RevCand_1D': False, 'RevCand_1W': False, 'RevCand_1M': False,
         # Track if any bearish signal found
-        'has_signal': False
+        'has_signal': False,
+        'signal_count': 0
     }
     
     try:
@@ -459,7 +493,8 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
         return results
 
     # 1. FVG & Order Flow & iFVG (Iterate Timeframes)
-    for tf in ["1D", "1W", "1M", "6M"]:
+    # Order Flow only for 1D, 1W, 1M (removed 6M)
+    for tf in ["1D", "1W", "1M"]:
         if tf not in data_map or len(data_map[tf]) < 5: continue
         
         df = data_map[tf].copy() 
@@ -472,7 +507,7 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
         prev = df.iloc[-2]
 
         # --- A. SNIPER FVG BREAKDOWNS ---
-        if curr['Bear_FVG'] and tf in ["1D", "1W", "1M"]:
+        if curr['Bear_FVG']:
             past_swings = df[df['Is_Swing_Low']]
             if not past_swings.empty:
                 last_swing_low = past_swings['Low'].iloc[-1]
@@ -492,12 +527,11 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
                     results[f'OB_{tf}'] = True
                     results['has_signal'] = True
         
-        # --- C. iFVG REVERSALS (1D, 1W, 1M only) ---
-        if tf in ["1D", "1W", "1M"]:
-            ifvg_status = MathWiz.check_ifvg_reversal(df)
-            if ifvg_status == "Bear":
-                results[f'iFVG_{tf}'] = True
-                results['has_signal'] = True
+        # --- C. iFVG REVERSALS ---
+        ifvg_status = MathWiz.check_ifvg_reversal(df)
+        if ifvg_status == "Bear":
+            results[f'iFVG_{tf}'] = True
+            results['has_signal'] = True
 
     # 2. TREND REVERSAL (Exhaustion) - Weekly Chop < 25
     if not d_1w.empty:
@@ -530,21 +564,28 @@ def analyze_ticker_bearish(ticker, df_daily_raw, df_monthly_raw):
             results['RevCand_1M'] = True
             results['has_signal'] = True
 
+    # Count total signals
+    results['signal_count'] = count_signals(results, 'bearish')
+
     return results
 
 
 def create_consolidated_table(results_list, is_macro=False, macro_names=None, scan_type='bullish'):
     """
     Creates a consolidated DataFrame with multi-level columns for display.
+    Only includes tickers with 2 or more signals.
     """
     if not results_list:
         return None
     
-    # Filter only stocks with signals
-    filtered = [r for r in results_list if r.get('has_signal', False)]
+    # Filter only stocks with 2+ signals
+    filtered = [r for r in results_list if r.get('signal_count', 0) >= 2]
     
     if not filtered:
         return None
+    
+    # Sort by signal count descending
+    filtered = sorted(filtered, key=lambda x: x.get('signal_count', 0), reverse=True)
     
     # Create base dataframe
     df = pd.DataFrame(filtered)
@@ -573,7 +614,6 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
                 ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
                 ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                ('Order Flow', '6M'): check if row.get('OB_6M') else empty,
                 ('Strong Support', '3M/6M/12M'): check if row.get('Support') else empty,
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
@@ -599,7 +639,6 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Order Flow', '1D'): check if row.get('OB_1D') else empty,
                 ('Order Flow', '1W'): check if row.get('OB_1W') else empty,
                 ('Order Flow', '1M'): check if row.get('OB_1M') else empty,
-                ('Order Flow', '6M'): check if row.get('OB_6M') else empty,
                 ('Trend Exhaustion', '1W'): check if row.get('Exhaustion') else empty,
                 ('Reversal Candidates', '1D'): check if row.get('RevCand_1D') else empty,
                 ('Reversal Candidates', '1W'): check if row.get('RevCand_1W') else empty,
@@ -619,7 +658,7 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
                 ('FVG Breakouts', '1D'), ('FVG Breakouts', '1W'), ('FVG Breakouts', '1M'),
                 ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'), ('Order Flow', '6M'),
+                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
                 ('Strong Support', '3M/6M/12M'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
                 ('Squeeze', '1D'), ('Squeeze', '1W'),
@@ -629,7 +668,7 @@ def create_consolidated_table(results_list, is_macro=False, macro_names=None, sc
                 ('Stock', 'Ticker'), ('Stock', 'Name'), ('Stock', 'Price'),
                 ('FVG Breakdowns', '1D'), ('FVG Breakdowns', '1W'), ('FVG Breakdowns', '1M'),
                 ('iFVG Reversals', '1D'), ('iFVG Reversals', '1W'), ('iFVG Reversals', '1M'),
-                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'), ('Order Flow', '6M'),
+                ('Order Flow', '1D'), ('Order Flow', '1W'), ('Order Flow', '1M'),
                 ('Trend Exhaustion', '1W'),
                 ('Reversal Candidates', '1D'), ('Reversal Candidates', '1W'), ('Reversal Candidates', '1M'),
             ]
@@ -707,6 +746,8 @@ def main():
             - 🐻 **Bearish:** FVG Breakdowns, iFVG Reversals, Order Flow, Trend Exhaustion, Reversal Candidates
             
             **Timeframes:** 1D, 1W, 1M, 3M, 6M, 12M
+            
+            **Note:** Only stocks with 2+ signals are displayed for higher conviction setups.
             """)
         
         if tickers:
@@ -761,7 +802,7 @@ def main():
         
         # --- DISPLAY ---
         st.header("🐂 Bullish Scans")
-        st.caption("Stocks showing bullish setups across multiple timeframes")
+        st.caption("Stocks with 2+ bullish signals across multiple timeframes (higher conviction)")
         
         if bull_table is not None and not bull_table.empty:
             st.dataframe(
@@ -771,12 +812,12 @@ def main():
                 height=min(len(bull_table) * 35 + 60, 600)
             )
         else:
-            st.info("No bullish setups found.")
+            st.info("No stocks found with 2+ bullish signals.")
         
         st.divider()
         
         st.header("🐻 Bearish Scans")
-        st.caption("Stocks showing bearish setups across multiple timeframes")
+        st.caption("Stocks with 2+ bearish signals across multiple timeframes (higher conviction)")
         
         if bear_table is not None and not bear_table.empty:
             st.dataframe(
@@ -786,24 +827,27 @@ def main():
                 height=min(len(bear_table) * 35 + 60, 600)
             )
         else:
-            st.info("No bearish setups found.")
+            st.info("No stocks found with 2+ bearish signals.")
         
         # Summary stats
         st.divider()
         st.subheader("📊 Scan Summary")
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            bull_count = len([r for r in bullish_results if r.get('has_signal')])
-            st.metric("Bullish Setups", bull_count)
+            bull_count = len([r for r in bullish_results if r.get('signal_count', 0) >= 2])
+            st.metric("Bullish (2+ signals)", bull_count)
         
         with col2:
-            bear_count = len([r for r in bearish_results if r.get('has_signal')])
-            st.metric("Bearish Setups", bear_count)
+            bear_count = len([r for r in bearish_results if r.get('signal_count', 0) >= 2])
+            st.metric("Bearish (2+ signals)", bear_count)
         
         with col3:
+            total_signals = len([r for r in bullish_results if r.get('has_signal')]) + len([r for r in bearish_results if r.get('has_signal')])
+            st.metric("Total Signals Found", total_signals)
+        
+        with col4:
             st.metric("Total Scanned", len(tickers))
 
 if __name__ == "__main__":
-
     main()
